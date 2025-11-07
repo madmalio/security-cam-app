@@ -1,0 +1,22 @@
+# --- Secrets ---
+# This is the most important line!
+# It ignores your database and API secret keys.
+backend/.env
+
+# --- Node.js / Next.js ---
+# Ignore the massive folder of downloaded packages
+frontend/node_modules/
+
+# Ignore the Next.js build cache
+frontend/.next/
+
+# Ignore Next.js environment files
+frontend/.env.local
+
+# --- Python ---
+# Ignore Python cache files
+backend/__pycache__/
+
+# --- OS Files ---
+# Ignore Mac-specific files
+.DS_Store

@@ -1,0 +1,23 @@
+authMethod: internal
+authInternalUsers:
+  # User for your backend API to add cameras
+  - user: admin
+    pass: mysecretpassword
+    permissions:
+      - action: api
+
+  # User for your frontend player to watch streams
+  - user: viewer
+    pass: secret
+    permissions:
+      - action: read
+
+# --- This enables the API on port 9997 ---
+api: yes
+apiAddress: :9997
+
+# --- These are your existing port settings ---
+webrtcAddress: :8888
+hlsAddress: :8887
+
+paths: {}

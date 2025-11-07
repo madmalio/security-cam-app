@@ -1,0 +1,72 @@
+version: "3.8"
+
+services:
+  # 1. Frontend (Next.js)
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "3001:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8080
+    depends_on:
+      - backend
+    networks:
+      - cam_net
+    restart: unless-stopped
+
+  # 2. Backend (Now running FastAPI)
+  # This definition is generic and works perfectly.
+  # It will find and use your new Python Dockerfile.
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8080:8080"
+    env_file:
+      - ./backend/.env
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - cam_net
+    restart: always
+
+  # 3. Database (PostgreSQL)
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=supersecret
+      - POSTGRES_DB=cameradb
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - cam_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d cameradb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 4. Media Server (mediamtx)
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    restart: always
+    ports:
+      - "8888:8888" # WHEP/WHIP (WebRTC)
+      - "8554:8554" # RTSP
+      - "1935:1935" # RTMP
+      - "8189:8189/udp"
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml
+    networks:
+      - cam_net
+
+networks:
+  cam_net:
+    driver: bridge
+
+volumes:
+  db_data:
