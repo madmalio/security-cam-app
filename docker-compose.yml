@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   # 1. Frontend (Next.js)
   frontend:
@@ -15,9 +13,7 @@ services:
       - cam_net
     restart: unless-stopped
 
-  # 2. Backend (Now running FastAPI)
-  # This definition is generic and works perfectly.
-  # It will find and use your new Python Dockerfile.
+  # 2. Backend (FastAPI)
   backend:
     build:
       context: ./backend
@@ -52,15 +48,29 @@ services:
 
   # 4. Media Server (mediamtx)
   mediamtx:
-    image: bluenviron/mediamtx:latest
+    image: bluenviron/mediamtx:1-ffmpeg
     restart: always
     ports:
       - "8888:8888" # WHEP/WHIP (WebRTC)
       - "8554:8554" # RTSP
       - "1935:1935" # RTMP
       - "8189:8189/udp"
+      - "9997:9997" # API
+      - "8887:8887" # HLS
     volumes:
       - ./mediamtx.yml:/mediamtx.yml
+      - snapshots-data:/snapshots
+    networks:
+      - cam_net
+
+  # --- 5. NEW Snapshot Server (nginx) ---
+  nginx:
+    image: nginx:1.25-alpine-slim
+    restart: always
+    ports:
+      - "8889:80"
+    volumes:
+      - snapshots-data:/usr/share/nginx/html
     networks:
       - cam_net
 
@@ -70,3 +80,4 @@ networks:
 
 volumes:
   db_data:
+  snapshots-data:

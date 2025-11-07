@@ -25,7 +25,7 @@ models.Base.metadata.create_all(bind=engine)
 app = FastAPI()
 
 # ====================================================================
-#                 UPDATED: Startup Event (Using v3)
+#                     Startup Event (UPDATED)
 # ====================================================================
 
 @app.on_event("startup")
@@ -49,24 +49,41 @@ async def on_startup():
                 log.warning(f"--- STARTUP: Skipping camera {camera.path} (no RTSP URL saved) ---")
                 continue
 
-            log.info(f"--- STARTUP: Editing/Adding camera {camera.path} ---")
-            
-            # --- FIX: Use POST /v3/paths/{name} ---
-            # This is the correct idempotent endpoint
-            mediamtx_url = f"http://mediamtx:9997/v3/paths/{camera.path}"
+            log.info(f"--- STARTUP: Updating camera {camera.path} ---")
+            mediamtx_url = f"http://mediamtx:9997/v3/config/paths/patch/{camera.path}"
             
             try:
-                response = await client.post( # <--- Use POST
+                # We PATCH to update existing cameras
+                response = await client.patch(
                     mediamtx_url,
                     auth=auth,
                     json={
                         "source": camera.rtsp_url, 
                         "sourceOnDemand": True
+                        # "snapshots" field removed - it's not supported
                     }
                 )
                 response.raise_for_status()
             except httpx.HTTPStatusError as e:
-                log.warning(f"--- STARTUP: Failed to edit/add camera {camera.path}: {e} ---")
+                # If PATCH fails (i.e., path doesn't exist), try to add it
+                if e.response.status_code == 404:
+                    log.warning(f"--- STARTUP: Path {camera.path} not found, creating it... ---")
+                    add_url = f"http://mediamtx:9997/v3/config/paths/add/{camera.path}"
+                    try:
+                        add_response = await client.post(
+                            add_url,
+                            auth=auth,
+                            json={
+                                "source": camera.rtsp_url,
+                                "sourceOnDemand": True
+                                # "snapshots" field removed - it's not supported
+                            }
+                        )
+                        add_response.raise_for_status()
+                    except httpx.HTTPStatusError as add_e:
+                        log.error(f"--- STARTUP: Failed to create path {camera.path}: {add_e} ---")
+                else:
+                    log.warning(f"--- STARTUP: Failed to update camera {camera.path}: {e} ---")
             except httpx.RequestError as e:
                 log.error(f"--- STARTUP: Could not contact mediamtx: {e} ---")
 
@@ -77,7 +94,7 @@ async def on_startup():
 # ====================================================================
 #                 CORS Middleware & Pydantic Schemas
 # ====================================================================
-
+# ... (Unchanged - but make sure your pydantic Config classes use 'from_attributes = True') ...
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -104,7 +121,7 @@ class Camera(CameraBase):
     rtsp_url: str
 
     class Config:
-        orm_mode = True
+        from_attributes = True 
 
 class UserBase(BaseModel):
     email: str
@@ -121,7 +138,7 @@ class User(UserBase):
     id: int
     cameras: List[Camera] = []
     class Config:
-        orm_mode = True
+        from_attributes = True 
 
 class Token(BaseModel):
     access_token: str
@@ -132,7 +149,8 @@ class TokenData(BaseModel):
 
 
 # --- Security & Authentication ---
-SECRET_KEY = "RaMwSsltzoj96e89VYWUwW9iRs6bsrj3" # Change this!
+# ... (Unchanged) ...
+SECRET_KEY = "oVlxx1WjIyVNfsr2WWROPcsVyBhW5L7u" # Change this!
 ALGORITHM = "HS256"
 
 pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
@@ -150,6 +168,7 @@ def create_access_token(data: dict):
     return encoded_jwt
 
 # --- Database CRUD Functions ---
+# ... (Unchanged) ...
 def get_user_by_email(db: Session, email: str):
     return db.query(models.User).options(joinedload(models.User.cameras)).filter(models.User.email == email).first()
 
@@ -164,6 +183,7 @@ def get_cameras_by_user(db: Session, user_id: int):
     return db.query(models.Camera).filter(models.Camera.owner_id == user_id).all()
 
 # --- Security Dependency ---
+# ... (Unchanged) ...
 async def get_token_data(token: str | None = Depends(oauth2_scheme)) -> TokenData:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -183,6 +203,7 @@ async def get_token_data(token: str | None = Depends(oauth2_scheme)) -> TokenDat
         raise credentials_exception
 
 # --- API Endpoints ---
+# ... (Root, register, token, users/me, api/cameras GET are unchanged) ...
 @app.get("/")
 def read_root():
     return {"message": "Security Camera API is running!"}
@@ -241,8 +262,8 @@ async def read_user_cameras(
     finally:
         db.close()
 
-# --- UPDATED Endpoint ---
-@app.post("/api/cameras", response_model=Camera)
+
+@app.post("/api/cameras", response_model=Camera, status_code=status.HTTP_201_CREATED)
 async def create_camera_for_user(
     camera: CameraCreate,
     token_data: TokenData = Depends(get_token_data)
@@ -260,17 +281,17 @@ async def create_camera_for_user(
         if existing:
             raise HTTPException(status_code=400, detail="A camera with this name already exists")
 
-        # --- FIX: Use POST /v3/paths/{name} ---
-        mediamtx_url = f"http://mediamtx:9997/v3/paths/{path_name}"
+        mediamtx_url = f"http://mediamtx:9997/v3/config/paths/add/{path_name}"
         try:
             auth = ("admin", "mysecretpassword")
             async with httpx.AsyncClient() as client:
-                response = await client.post( # <--- Use POST
+                response = await client.post(
                     mediamtx_url,
                     auth=auth, 
                     json={
                         "source": camera.rtsp_url,
                         "sourceOnDemand": True
+                        # "snapshots" field removed - it's not supported
                     }
                 )
             response.raise_for_status()
@@ -294,9 +315,9 @@ async def create_camera_for_user(
         db.close()
 
 # ====================================================================
-#                 UPDATED: Delete Camera Endpoint
+#                 Delete Camera Endpoint
 # ====================================================================
-
+# ... (Unchanged) ...
 @app.delete("/api/cameras/{camera_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_camera(
     camera_id: int,
@@ -308,6 +329,7 @@ async def delete_camera(
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
+        # Find the camera in the DB
         db_camera = db.query(models.Camera).filter(
             models.Camera.id == camera_id,
             models.Camera.owner_id == user.id
@@ -316,14 +338,13 @@ async def delete_camera(
         if db_camera is None:
             raise HTTPException(status_code=404, detail="Camera not found or user does not own it")
 
-        # --- FIX: Use DELETE /v3/paths/{name} ---
-        mediamtx_url = f"http://mediamtx:9997/v3/paths/{db_camera.path}"
+        # 1. Tell mediamtx to remove the path
+        mediamtx_url = f"http://mediamtx:9997/v3/config/paths/delete/{db_camera.path}"
         try:
             auth = ("admin", "mysecretpassword")
             async with httpx.AsyncClient() as client:
-                response = await client.delete(mediamtx_url, auth=auth) # <--- Use DELETE
-            
-            # 404 is OK, it means the path wasn't in memory
+                response = await client.delete(mediamtx_url, auth=auth)
+                log.info(f"--- DELETING CAMERA: Response status code {response.status_code} ---")
             if response.status_code != 404:
                 response.raise_for_status()
 
@@ -331,10 +352,14 @@ async def delete_camera(
             raise HTTPException(status_code=500, detail=f"Failed to contact mediamtx: {e}")
         except httpx.HTTPStatusError as e:
             raise HTTPException(status_code=e.response.status_code, detail=f"mediamtx error: {e.response.text}")
+        except Exception as e:
+            log.error(f"--- DELETING CAMERA: Failed to delete path {mediamtx_url}: {e} ---")
 
+        # 2. If mediamtx call was successful (or 404), delete from DB
         db.delete(db_camera)
         db.commit()
         
+        # Return nothing, as per 204 status code
         return
 
     finally:

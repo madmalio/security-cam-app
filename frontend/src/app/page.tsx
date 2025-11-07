@@ -1,343 +1,76 @@
-from fastapi import FastAPI, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session, joinedload
-from typing import List
-import re
-import httpx
-import logging
+"use client";
 
-# Import our own modules
-import models
-import database
-from database import SessionLocal, engine, get_db
+import React, { useState, useEffect } from "react";
+import { Toaster, toast } from "sonner";
+import { Loader } from "lucide-react";
+import { User } from "./types";
+import AuthPage from "./components/AuthPage";
+import DashboardPage from "./components/DashboardPage";
 
-from passlib.context import CryptContext
-from jose import JWTError, jwt
-from pydantic import BaseModel, Field, validator
+// --- Constants ---
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
-# --- Logging ---
-log = logging.getLogger("uvicorn")
+export default function Page() {
+  const [token, setToken] = useState<string | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-# --- Database Initialization ---
-models.Base.metadata.create_all(bind=engine)
+  useEffect(() => {
+    const loadToken = async () => {
+      const storedToken = localStorage.getItem("authToken");
+      if (storedToken) {
+        try {
+          const userResponse = await fetch(`${API_URL}/users/me`, {
+            headers: {
+              Authorization: `Bearer ${storedToken}`,
+            },
+          });
+          if (!userResponse.ok) {
+            throw new Error("Invalid token");
+          }
+          const userData = await userResponse.json();
+          setToken(storedToken);
+          setUser(userData);
+        } catch (error) {
+          localStorage.removeItem("authToken");
+        }
+      }
+      setIsLoading(false);
+    };
+    loadToken();
+  }, []);
 
-app = FastAPI()
+  const handleLogin = (newToken: string, newUser: User) => {
+    setToken(newToken);
+    setUser(newUser);
+    localStorage.setItem("authToken", newToken);
+  };
 
-# ====================================================================
-#                 UPDATED: Startup Event (Using v1 API)
-# ====================================================================
+  const handleLogout = () => {
+    setToken(null);
+    setUser(null);
+    localStorage.removeItem("authToken");
+    toast.success("You have been logged out.");
+  };
 
-@app.on_event("startup")
-async def on_startup():
-    log.info("--- STARTUP: Re-populating mediamtx (v1 API) ---")
-    
-    db = SessionLocal()
-    
-    all_cameras = db.query(models.Camera).all()
-    auth = ("admin", "mysecretpassword")
-    
-    async with httpx.AsyncClient() as client:
-        # --- FIX: Clear all paths on startup to prevent "path already exists" ---
-        try:
-            clear_url = "http://mediamtx:9997/v1/config/paths/set"
-            await client.post(clear_url, auth=auth, json={"paths": {}})
-            log.info("--- STARTUP: Cleared all existing paths from mediamtx ---")
-        except Exception as e:
-            log.error(f"--- STARTUP: Could not clear mediamtx paths: {e} ---")
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-100 dark:bg-gray-900">
+        <Loader className="h-12 w-12 animate-spin text-blue-600" />
+      </div>
+    );
+  }
 
-        if not all_cameras:
-            log.info("--- STARTUP: No cameras in database. Skipping. ---")
-            db.close()
-            return
+  const isLoggedIn = token && user;
 
-        for camera in all_cameras:
-            if not camera.rtsp_url:
-                log.warning(f"--- STARTUP: Skipping camera {camera.path} (no RTSP URL saved) ---")
-                continue
-
-            log.info(f"--- STARTUP: Adding camera {camera.path} ---")
-            
-            # --- FIX: Use POST /v1/config/paths/add ---
-            mediamtx_url = f"http://mediamtx:9997/v1/config/paths/add/{camera.path}"
-            
-            try:
-                response = await client..post(
-                    mediamtx_url,
-                    auth=auth,
-                    json={
-                        "source": camera.rtsp_url, 
-                        "sourceOnDemand": True
-                    }
-                )
-                response.raise_for_status()
-            except httpx.HTTPStatusError as e:
-                log.warning(f"--- STARTUP: Failed to add camera {camera.path}: {e} ---")
-            except httpx.RequestError as e:
-                log.error(f"--- STARTUP: Could not contact mediamtx: {e} ---")
-
-    db.close()
-    log.info("--- STARTUP: mediamtx re-population complete. ---")
-
-
-# ====================================================================
-#                 CORS Middleware & Pydantic Schemas
-# ====================================================================
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001"
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# --- Schemas ---
-class CameraBase(BaseModel):
-    name: str
-
-class CameraCreate(BaseModel):
-    name: str
-    rtsp_url: str
-
-class Camera(CameraBase):
-    id: int
-    owner_id: int
-    path: str
-    rtsp_url: str
-
-    class Config:
-        orm_mode = True
-
-class UserBase(BaseModel):
-    email: str
-
-class UserCreate(UserBase):
-    password: str = Field(..., min_length=8)
-    @validator('password')
-    def password_byte_length(cls, v):
-        if len(v.encode('utf-8')) > 72:
-            raise ValueError('Password is too long (max 72 bytes)')
-        return v
-
-class User(UserBase):
-    id: int
-    cameras: List[Camera] = []
-    class Config:
-        orm_mode = True
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
-class TokenData(BaseModel):
-    email: str | None = None
-
-
-# --- Security & Authentication ---
-SECRET_KEY = "YOUR_SUPER_SECRET_KEY" # Change this!
-ALGORITHM = "HS256"
-
-pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
-
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
-
-def get_password_hash(password):
-    return pwd_context.hash(password)
-
-def create_access_token(data: dict):
-    to_encode = data.copy()
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-# --- Database CRUD Functions ---
-def get_user_by_email(db: Session, email: str):
-    return db.query(models.User).options(joinedload(models.User.cameras)).filter(models.User.email == email).first()
-
-def create_user_db(db: Session, user: UserCreate):
-    hashed_password = get_password_hash(user.password)
-    db_user = models.User(email=user.email, hashed_password=hashed_password)
-    db.add(db_user)
-    db.commit()
-    return get_user_by_email(db, user.email)
-
-def get_cameras_by_user(db: Session, user_id: int):
-    return db.query(models.Camera).filter(models.Camera.owner_id == user_id).all()
-
-# --- Security Dependency ---
-async def get_token_data(token: str | None = Depends(oauth2_scheme)) -> TokenData:
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    if token is None:
-        raise credentials_exception
-    
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None:
-            raise credentials_exception
-        return TokenData(email=email)
-    except JWTError:
-        raise credentials_exception
-
-# --- API Endpoints ---
-@app.get("/")
-def read_root():
-    return {"message": "Security Camera API is running!"}
-
-@app.post("/register", response_model=User)
-def register_user(user: UserCreate, db: Session = Depends(get_db)):
-    db_user = get_user_by_email(db, email=user.email)
-    if db_user:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    return create_user_db(db=db, user=user)
-
-@app.post("/token", response_model=Token)
-async def login_for_access_token(
-    form_data: OAuth2PasswordRequestForm = Depends(), 
-):
-    db = SessionLocal()
-    try:
-        user = get_user_by_email(db, email=form_data.username)
-        if not user or not verify_password(form_data.password, user.hashed_password):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Incorrect email or password",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        access_token_data = {"sub": user.email}
-        access_token = create_access_token(access_token_data)
-        return {"access_token": access_token, "token_type": "bearer"}
-    finally:
-        db.close()
-
-@app.get("/users/me", response_model=User)
-async def read_users_me(
-    token_data: TokenData = Depends(get_token_data)
-):
-    db = SessionLocal()
-    try:
-        user = get_user_by_email(db, email=token_data.email)
-        if user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-        return user
-    finally:
-        db.close()
-
-@app.get("/api/cameras", response_model=List[Camera])
-async def read_user_cameras(
-    token_data: TokenData = Depends(get_token_data)
-):
-    db = SessionLocal()
-    try:
-        user = get_user_by_email(db, email=token_data.email)
-        if user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        cameras = get_cameras_by_user(db, user_id=user.id)
-        return cameras
-    finally:
-        db.close()
-
-# --- UPDATED Endpoint (v1) ---
-@app.post("/api/cameras", response_model=Camera)
-async def create_camera_for_user(
-    camera: CameraCreate,
-    token_data: TokenData = Depends(get_token_data)
-):
-    db = SessionLocal()
-    try:
-        user = get_user_by_email(db, email=token_data.email)
-        if user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-            
-        safe_name = re.sub(r'[^a-zA-Z0-9_-]', '', camera.name.lower().replace(" ", "_"))
-        path_name = f"user_{user.id}_{safe_name}"
-
-        existing = db.query(models.Camera).filter(models.Camera.path == path_name, models.Camera.owner_id == user.id).first()
-        if existing:
-            raise HTTPException(status_code=400, detail="A camera with this name already exists")
-
-        # --- FIX: Use POST /v1/config/paths/add ---
-        mediamtx_url = f"http://mediamtx:9997/v1/config/paths/add/{path_name}"
-        try:
-            auth = ("admin", "mysecretpassword")
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    mediamtx_url,
-                    auth=auth, 
-                    json={
-                        "source": camera.rtsp_url,
-                        "sourceOnDemand": True
-                    }
-                )
-            response.raise_for_status()
-
-        except httpx.RequestError as e:
-            raise HTTPException(status_code=500, detail=f"Failed to contact mediamtx: {e}")
-        except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=e.response.status_code, detail=f"mediamtx error: {e.response.text}")
-
-        db_camera = models.Camera(
-            name=camera.name, 
-            path=path_name, 
-            rtsp_url=camera.rtsp_url,
-            owner_id=user.id
-        )
-        db.add(db_camera)
-        db.commit()
-        db.refresh(db_camera)
-        return db_camera
-    finally:
-        db.close()
-
-# --- UPDATED Endpoint (v1) ---
-@app.delete("/api/cameras/{camera_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_camera(
-    camera_id: int,
-    token_data: TokenData = Depends(get_token_data)
-):
-    db = SessionLocal()
-    try:
-        user = get_user_by_email(db, email=token_data.email)
-        if user is None:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        db_camera = db.query(models.Camera).filter(
-            models.Camera.id == camera_id,
-            models.Camera.owner_id == user.id
-        ).first()
-
-        if db_camera is None:
-            raise HTTPException(status_code=404, detail="Camera not found or user does not own it")
-
-        # --- FIX: Use POST /v1/config/paths/remove ---
-        mediamtx_url = f"http://mediamtx:9997/v1/config/paths/remove/{db_camera.path}"
-        try:
-            auth = ("admin", "mysecretpassword")
-            async with httpx.AsyncClient() as client:
-                response = await client.post(mediamtx_url, auth=auth) # <--- Use POST
-            
-            if response.status_code != 404:
-                response.raise_for_status()
-
-        except httpx.RequestError as e:
-            raise HTTPException(status_code=500, detail=f"Failed to contact mediamtx: {e}")
-        except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=e.response.status_code, detail=f"mediamtx error: {e.response.text}")
-
-        db.delete(db_camera)
-        db.commit()
-        
-        return
-
-    finally:
-        db.close()
+  return (
+    <main>
+      <Toaster position="top-right" richColors />
+      {!isLoggedIn ? (
+        <AuthPage onLoginSuccess={handleLogin} />
+      ) : (
+        <DashboardPage token={token} user={user} onLogout={handleLogout} />
+      )}
+    </main>
+  );
+}
