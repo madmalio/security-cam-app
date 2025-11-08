@@ -31,7 +31,7 @@ pathDefaults:
       # This is the single, efficient ffmpeg command.
       # It runs as ONE continuous process.
       # It uses the correct admin credentials to avoid the 401 error.
-      ffmpeg -rtsp_transport tcp -i rtsp://admin:mysecretpassword@localhost:8554/$MTX_PATH -vf fps=1/2 -update true /snapshots/$MTX_PATH/snapshot.jpg
+      ffmpeg -rtsp_transport tcp -i rtsp://admin:mysecretpassword@localhost:8554/$MTX_PATH -vf fps=1/10 -update true /snapshots/$MTX_PATH/snapshot.jpg
     "
   runOnReadyRestart: yes
 
