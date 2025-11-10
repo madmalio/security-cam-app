@@ -7,11 +7,15 @@ import { Loader, AlertTriangle, Video, Maximize, Minimize } from "lucide-react";
 // --- Constants ---
 const MEDIAMTX_URL = "http://localhost:8888";
 
-interface CameraViewProps {
+interface LiveCameraViewProps {
   camera: Camera | null;
+  isMuted?: boolean;
 }
 
-export default function CameraView({ camera }: CameraViewProps) {
+export default function LiveCameraView({
+  camera,
+  isMuted = true,
+}: LiveCameraViewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const [connectionState, setConnectionState] = useState("idle");
@@ -147,28 +151,24 @@ export default function CameraView({ camera }: CameraViewProps) {
       <video
         ref={videoRef}
         autoPlay
-        muted
+        muted={isMuted}
         playsInline
         className={`h-full w-full rounded-lg ${
-          isFullscreen ? "object-contain" : "object-cover"
+          // --- THIS IS THE FIX ---
+          // Use 'contain' if unmuted (focus view), 'cover' if muted (grid view)
+          !isMuted ? "object-contain" : "object-cover"
         }`}
       />
       <ConnectionStatus />
 
-      {connectionState === "connected" && (
-        <div className="absolute bottom-0 right-0 p-4 opacity-0 transition-opacity group-hover:opacity-100">
-          <button
-            onClick={toggleFullscreen}
-            className="rounded-full bg-black/50 p-2 text-white hover:bg-black/80"
-            title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
-          >
-            {isFullscreen ? (
-              <Minimize className="h-5 w-5" />
-            ) : (
-              <Maximize className="h-5 w-5" />
-            )}
-          </button>
-        </div>
+      {connectionState === "connected" && !isFullscreen && (
+        <button
+          onClick={toggleFullscreen}
+          className="absolute bottom-2 right-2 rounded-full bg-black/50 p-2 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-black/80"
+          title="Enter Fullscreen"
+        >
+          <Maximize className="h-5 w-5" />
+        </button>
       )}
     </div>
   );

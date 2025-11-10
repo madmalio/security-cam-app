@@ -9,11 +9,14 @@ import {
   PlusCircle,
   User as UserIcon,
   Video,
+  Fullscreen,
 } from "lucide-react";
 
 import Sidebar from "./Sidebar";
-import CameraView from "./CameraView";
+import LiveCameraView from "./LiveCameraView";
 import CameraGridView from "./CameraGridView";
+// FocusView is no longer used
+import MosaicView from "./MosaicView";
 import AddCameraModal from "./AddCameraModal";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 
@@ -33,30 +36,37 @@ export default function DashboardPage({
 }: DashboardPageProps) {
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [selectedCamera, setSelectedCamera] = useState<Camera | null>(null);
-  const [error, setError] = useState<string | null>(null); // For fetch errors
+  const [error, setError] = useState<string | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [cameraToDelete, setCameraToDelete] = useState<Camera | null>(null);
 
-  // --- 1. UPDATED: Read from localStorage on initial load ---
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
-    // This function runs only on the client, avoiding SSR issues
     if (typeof window !== "undefined") {
       const savedState = localStorage.getItem("sidebarOpen");
-      // If a value is saved, parse it. Otherwise, default to true (open).
       return savedState !== null ? JSON.parse(savedState) : true;
     }
-    // Default for server-side rendering
     return true;
   });
 
   const [viewMode, setViewMode] = useState<"single" | "grid">("grid");
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // --- 2. ADDED: Save state to localStorage on change ---
   useEffect(() => {
     localStorage.setItem("sidebarOpen", JSON.stringify(isSidebarOpen));
   }, [isSidebarOpen]);
+
+  // Listen for fullscreen changes
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+    };
+  }, []);
 
   // Fetch cameras on mount
   useEffect(() => {
@@ -85,33 +95,46 @@ export default function DashboardPage({
     fetchCameras();
   }, [token]);
 
+  const toggleBrowserFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen();
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      }
+    }
+  };
+
   const handleCameraAdded = (newCamera: Camera) => {
     setCameras((prevCameras) => [...prevCameras, newCamera]);
-    setSelectedCamera(newCamera); // Select the new camera
-    setViewMode("single"); // Switch to single view to show it
+    setSelectedCamera(newCamera);
+    setViewMode("single");
     toast.success(`"${newCamera.name}" was added successfully!`);
   };
 
-  const handleCameraSelect = (camera: Camera) => {
+  const handleSelectAndGoToSingle = (camera: Camera) => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    }
     setSelectedCamera(camera);
     setViewMode("single");
   };
 
   const handleDeleteCamera = async (cameraToDelete: Camera) => {
+    // ... (logic unchanged) ...
     const originalCameras = [...cameras];
     const originalSelected = selectedCamera;
 
-    // Optimistically update UI
     const newCameras = cameras.filter((cam) => cam.id !== cameraToDelete.id);
     setCameras(newCameras);
 
     if (selectedCamera?.id === cameraToDelete.id) {
       if (newCameras.length > 0) {
         setSelectedCamera(newCameras[0]);
-        setViewMode("single"); // Stay in single view, just change camera
+        setViewMode("grid");
       } else {
-        setSelectedCamera(null); // No cameras left
-        setViewMode("grid"); // Switch to grid view (which will be empty)
+        setSelectedCamera(null);
+        setViewMode("grid");
       }
     }
 
@@ -125,9 +148,7 @@ export default function DashboardPage({
           },
         }
       );
-
       if (!response.ok) {
-        // Revert on failure
         setCameras(originalCameras);
         setSelectedCamera(originalSelected);
         toast.error(`Failed to delete ${cameraToDelete.name}`);
@@ -135,7 +156,6 @@ export default function DashboardPage({
         toast.success(`"${cameraToDelete.name}" was deleted.`);
       }
     } catch (err) {
-      // Revert on failure
       setCameras(originalCameras);
       setSelectedCamera(originalSelected);
       toast.error(`Failed to delete ${cameraToDelete.name}`);
@@ -147,6 +167,41 @@ export default function DashboardPage({
     setIsConfirmOpen(true);
   };
 
+  const renderMainContent = () => {
+    // Show skeleton box if no cameras
+    if (cameras.length === 0) {
+      return (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <button
+            onClick={() => setIsAddModalOpen(true)}
+            className="flex aspect-video flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 p-12 text-center text-gray-400 transition-all hover:border-blue-500 hover:text-blue-500 dark:border-gray-700"
+          >
+            <PlusCircle className="h-12 w-12" />
+            <h3 className="mt-4 text-xl font-semibold text-gray-900 dark:text-white">
+              Add Camera
+            </h3>
+            <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+              Click to add your first camera
+            </p>
+          </button>
+        </div>
+      );
+    }
+
+    // Show single view
+    if (viewMode === "single") {
+      return <LiveCameraView camera={selectedCamera} isMuted={false} />;
+    }
+
+    // Show grid view (default)
+    return (
+      <CameraGridView
+        cameras={cameras}
+        onCameraSelect={handleSelectAndGoToSingle}
+      />
+    );
+  };
+
   return (
     <div className="flex h-screen w-full bg-gray-100 dark:bg-gray-900">
       <Sidebar
@@ -155,13 +210,12 @@ export default function DashboardPage({
         cameras={cameras}
         selectedCamera={selectedCamera}
         viewMode={viewMode}
-        onCameraSelect={handleCameraSelect}
+        onCameraSelect={handleSelectAndGoToSingle}
         onAddCameraClick={() => setIsAddModalOpen(true)}
         onDeleteCameraClick={openDeleteModal}
         onLogout={onLogout}
       />
 
-      {/* --- Main Content --- */}
       <div
         className={`relative flex flex-1 flex-col overflow-hidden transition-all duration-300 ${
           isSidebarOpen ? "ml-64" : "ml-20"
@@ -174,21 +228,27 @@ export default function DashboardPage({
               : "All Cameras"}
           </h1>
           <div className="flex items-center">
-            <button
-              onClick={() =>
-                setViewMode(viewMode === "single" ? "grid" : "single")
-              }
-              className="mr-4 rounded-full p-2 text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
-              title={
-                viewMode === "single" ? "Show Grid View" : "Show Single View"
-              }
-            >
-              {viewMode === "single" ? (
+            {viewMode === "grid" && cameras.length > 0 && (
+              <button
+                onClick={toggleBrowserFullscreen}
+                className="mr-4 rounded-full p-2 text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+                title="Fullscreen Mosaic View"
+              >
+                <Fullscreen className="h-5 w-5" />
+              </button>
+            )}
+
+            {/* "Back" button when in single view */}
+            {viewMode === "single" && cameras.length > 0 && (
+              <button
+                onClick={() => setViewMode("grid")} // Always go back to grid
+                className="mr-4 rounded-full p-2 text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+                title={"Show Grid View"}
+              >
                 <Grid className="h-5 w-5" />
-              ) : (
-                <Monitor className="h-5 w-5" />
-              )}
-            </button>
+              </button>
+            )}
+
             <span className="mr-3 text-right text-sm font-medium text-gray-900 dark:text-white">
               {user.email}
             </span>
@@ -197,37 +257,18 @@ export default function DashboardPage({
         </header>
 
         <main className="flex-1 overflow-y-auto p-8">
-          {cameras.length === 0 && (
-            <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 p-12 text-center dark:border-gray-700">
-              <Video className="h-12 w-12 text-gray-400" />
-              <h3 className="mt-4 text-xl font-semibold text-gray-900 dark:text-white">
-                No cameras found
-              </h3>
-              <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                Get started by adding your first camera.
-              </p>
-              <button
-                onClick={() => setIsAddModalOpen(true)}
-                className="group mt-6 flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-base font-medium text-white hover:bg-blue-700"
-              >
-                <PlusCircle className="mr-2 h-5 w-5" />
-                Add Camera
-              </button>
-            </div>
-          )}
-
-          {viewMode === "single" && cameras.length > 0 && (
-            <CameraView camera={selectedCamera} />
-          )}
-
-          {viewMode === "grid" && cameras.length > 0 && (
-            <CameraGridView
-              cameras={cameras}
-              onCameraSelect={handleCameraSelect}
-            />
-          )}
+          {renderMainContent()}
         </main>
       </div>
+
+      {/* --- RENDER FULLSCREEN MOSAIC --- */}
+      {isFullscreen && cameras.length > 0 && (
+        <MosaicView
+          cameras={cameras}
+          onExitFullscreen={toggleBrowserFullscreen}
+          // The onCameraSelect prop is now GONE
+        />
+      )}
 
       {/* --- Modals --- */}
       {isAddModalOpen && (

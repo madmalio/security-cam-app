@@ -17,7 +17,7 @@ interface SidebarProps {
   setIsOpen: (isOpen: boolean) => void;
   cameras: Camera[];
   selectedCamera: Camera | null;
-  viewMode: "single" | "grid";
+  viewMode: "single" | "grid"; // <-- THIS IS THE FIX (simplified)
   onCameraSelect: (camera: Camera) => void;
   onAddCameraClick: () => void;
   onDeleteCameraClick: (camera: Camera) => void;
@@ -92,7 +92,6 @@ export default function Sidebar({
                 {isOpen ? (
                   <Video className="h-6 w-6 flex-shrink-0" />
                 ) : (
-                  // --- THIS IS THE UPDATED LINE ---
                   <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-gray-600 text-sm font-medium text-white">
                     {getInitials(cam.name)}
                   </span>

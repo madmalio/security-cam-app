@@ -21,18 +21,4 @@ hls: yes
 hlsAddress: :8887
 hlsAllowOrigin: "*"
 
-pathDefaults:
-  runOnReady: |
-    sh -c "
-      # Create a directory for this camera's snapshots
-      mkdir -p /snapshots/$MTX_PATH
-      
-      # --- CPU FIX ---
-      # This is the single, efficient ffmpeg command.
-      # It runs as ONE continuous process.
-      # It uses the correct admin credentials to avoid the 401 error.
-      ffmpeg -rtsp_transport tcp -i rtsp://admin:mysecretpassword@localhost:8554/$MTX_PATH -vf fps=1/10 -update true /snapshots/$MTX_PATH/snapshot.jpg
-    "
-  runOnReadyRestart: yes
-
 paths: {}
