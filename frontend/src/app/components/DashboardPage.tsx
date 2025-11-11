@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, Fragment } from "react";
 import { Camera, User } from "@/app/types";
 import { toast } from "sonner";
 import {
@@ -9,16 +9,25 @@ import {
   PlusCircle,
   User as UserIcon,
   Video,
+  Layout,
   Fullscreen,
+  AppWindow,
+  LogOut,
+  ChevronDown,
+  Settings,
+  ArrowLeft,
 } from "lucide-react";
+import { Menu as HeadlessMenu, Transition } from "@headlessui/react";
 
-import Sidebar from "./Sidebar";
+// Import all other components...
 import LiveCameraView from "./LiveCameraView";
 import CameraGridView from "./CameraGridView";
-// FocusView is no longer used
+import FocusView from "./FocusView";
 import MosaicView from "./MosaicView";
+import FullscreenGridView from "./FullscreenGridView";
 import AddCameraModal from "./AddCameraModal";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
+import SettingsPage from "./SettingsPage";
 
 // --- Constants ---
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
@@ -27,12 +36,14 @@ interface DashboardPageProps {
   token: string;
   user: User;
   onLogout: () => void;
+  onUserUpdate: (user: User) => void;
 }
 
 export default function DashboardPage({
   token,
   user,
   onLogout,
+  onUserUpdate,
 }: DashboardPageProps) {
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [selectedCamera, setSelectedCamera] = useState<Camera | null>(null);
@@ -42,25 +53,28 @@ export default function DashboardPage({
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [cameraToDelete, setCameraToDelete] = useState<Camera | null>(null);
 
-  const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
-    if (typeof window !== "undefined") {
-      const savedState = localStorage.getItem("sidebarOpen");
-      return savedState !== null ? JSON.parse(savedState) : true;
-    }
-    return true;
-  });
+  const [currentView, setCurrentView] = useState<"dashboard" | "settings">(
+    "dashboard"
+  );
 
-  const [viewMode, setViewMode] = useState<"single" | "grid">("grid");
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [viewMode, setViewMode] = useState<"single" | "grid" | "focus">("grid");
+  const [lastMultiView, setLastMultiView] = useState<"grid" | "focus">("grid");
+
+  const [isMosaicFullscreen, setIsMosaicFullscreen] = useState(false);
+  const [isGridFullscreen, setIsGridFullscreen] = useState(false);
 
   useEffect(() => {
-    localStorage.setItem("sidebarOpen", JSON.stringify(isSidebarOpen));
-  }, [isSidebarOpen]);
+    if (viewMode === "grid" || viewMode === "focus") {
+      setLastMultiView(viewMode);
+    }
+  }, [viewMode]);
 
-  // Listen for fullscreen changes
   useEffect(() => {
     const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
+      if (!document.fullscreenElement) {
+        setIsMosaicFullscreen(false);
+        setIsGridFullscreen(false);
+      }
     };
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     return () => {
@@ -68,39 +82,56 @@ export default function DashboardPage({
     };
   }, []);
 
+  // --- 1. EXTRACTED fetchCameras ---
+  const fetchCameras = async () => {
+    try {
+      setError(null);
+      const response = await fetch(`${API_URL}/api/cameras`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error("Failed to fetch cameras");
+      }
+      const data: Camera[] = await response.json();
+      setCameras(data);
+      if (data.length > 0 && !selectedCamera) {
+        setSelectedCamera(data[0]);
+      }
+    } catch (err: any) {
+      setError(err.message);
+      toast.error(err.message);
+    }
+  };
+
   // Fetch cameras on mount
   useEffect(() => {
-    const fetchCameras = async () => {
-      try {
-        setError(null);
-        const response = await fetch(`${API_URL}/api/cameras`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-        if (!response.ok) {
-          throw new Error("Failed to fetch cameras");
-        }
-        const data: Camera[] = await response.json();
-        setCameras(data);
-        if (data.length > 0) {
-          setSelectedCamera(data[0]);
-        }
-      } catch (err: any) {
-        setError(err.message);
-        toast.error(err.message);
-      }
-    };
+    if (currentView === "dashboard") {
+      fetchCameras();
+    }
+  }, [token, currentView]); // <-- Refetch when returning to dashboard
 
-    fetchCameras();
-  }, [token]);
-
-  const toggleBrowserFullscreen = () => {
+  const toggleMosaicFullscreen = () => {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen();
+      setIsMosaicFullscreen(true);
     } else {
       if (document.exitFullscreen) {
         document.exitFullscreen();
+        setIsMosaicFullscreen(false);
+      }
+    }
+  };
+
+  const toggleGridFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen();
+      setIsGridFullscreen(true);
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+        setIsGridFullscreen(false);
       }
     }
   };
@@ -120,6 +151,10 @@ export default function DashboardPage({
     setViewMode("single");
   };
 
+  const handleSelectForFocus = (camera: Camera) => {
+    setSelectedCamera(camera);
+  };
+
   const handleDeleteCamera = async (cameraToDelete: Camera) => {
     // ... (logic unchanged) ...
     const originalCameras = [...cameras];
@@ -130,8 +165,10 @@ export default function DashboardPage({
 
     if (selectedCamera?.id === cameraToDelete.id) {
       if (newCameras.length > 0) {
-        setSelectedCamera(newCameras[0]);
-        setViewMode("grid");
+        const newSelection =
+          newCameras.find((c) => c.id !== cameraToDelete.id) || newCameras[0];
+        setSelectedCamera(newSelection);
+        setViewMode(viewMode === "single" ? lastMultiView : viewMode);
       } else {
         setSelectedCamera(null);
         setViewMode("grid");
@@ -167,8 +204,8 @@ export default function DashboardPage({
     setIsConfirmOpen(true);
   };
 
-  const renderMainContent = () => {
-    // Show skeleton box if no cameras
+  const renderDashboardContent = () => {
+    // ... (logic unchanged) ...
     if (cameras.length === 0) {
       return (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -187,13 +224,19 @@ export default function DashboardPage({
         </div>
       );
     }
-
-    // Show single view
     if (viewMode === "single") {
       return <LiveCameraView camera={selectedCamera} isMuted={false} />;
     }
-
-    // Show grid view (default)
+    if (viewMode === "focus") {
+      return (
+        <FocusView
+          cameras={cameras}
+          selectedCamera={selectedCamera || cameras[0]}
+          onSelectCamera={handleSelectForFocus}
+          onFocusClick={handleSelectAndGoToSingle}
+        />
+      );
+    }
     return (
       <CameraGridView
         cameras={cameras}
@@ -204,73 +247,188 @@ export default function DashboardPage({
 
   return (
     <div className="flex h-screen w-full bg-gray-100 dark:bg-gray-900">
-      <Sidebar
-        isOpen={isSidebarOpen}
-        setIsOpen={setIsSidebarOpen}
-        cameras={cameras}
-        selectedCamera={selectedCamera}
-        viewMode={viewMode}
-        onCameraSelect={handleSelectAndGoToSingle}
-        onAddCameraClick={() => setIsAddModalOpen(true)}
-        onDeleteCameraClick={openDeleteModal}
-        onLogout={onLogout}
-      />
-
-      <div
-        className={`relative flex flex-1 flex-col overflow-hidden transition-all duration-300 ${
-          isSidebarOpen ? "ml-64" : "ml-20"
-        }`}
-      >
+      <div className={`relative flex flex-1 flex-col overflow-hidden`}>
         <header className="flex h-16 flex-shrink-0 items-center justify-between border-b border-gray-200 bg-white px-8 dark:border-gray-700 dark:bg-gray-800">
-          <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">
-            {viewMode === "single" && selectedCamera
-              ? selectedCamera.name
-              : "All Cameras"}
-          </h1>
+          {/* ... (Header logic unchanged) ... */}
+          <div className="flex items-center gap-4">
+            <Video className="h-8 w-8 text-blue-600 dark:text-blue-500" />
+            <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">
+              {currentView === "settings"
+                ? "Settings"
+                : viewMode === "single" && selectedCamera
+                ? selectedCamera.name
+                : "Dashboard"}
+            </h1>
+          </div>
           <div className="flex items-center">
-            {viewMode === "grid" && cameras.length > 0 && (
+            {currentView === "dashboard" &&
+              viewMode !== "single" &&
+              cameras.length > 0 && (
+                <>
+                  <button
+                    onClick={() => setViewMode("grid")}
+                    className={`mr-2 rounded-full p-2 ${
+                      viewMode === "grid" ? "bg-gray-200 dark:bg-gray-700" : ""
+                    } text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700`}
+                    title="Grid View"
+                  >
+                    <Grid className="h-5 w-5" />
+                  </button>
+                  <button
+                    onClick={() => setViewMode("focus")}
+                    className={`mr-2 rounded-full p-2 ${
+                      viewMode === "focus" ? "bg-gray-200 dark:bg-gray-700" : ""
+                    } text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700`}
+                    title="Focus View"
+                  >
+                    <Layout className="h-5 w-5" />
+                  </button>
+                  <button
+                    onClick={toggleMosaicFullscreen}
+                    className="mr-2 rounded-full p-2 text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+                    title="Fullscreen Mosaic View"
+                  >
+                    <Fullscreen className="h-5 w-5" />
+                  </button>
+                  <button
+                    onClick={toggleGridFullscreen}
+                    className="mr-4 rounded-full p-2 text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+                    title="Fullscreen Grid View"
+                  >
+                    <AppWindow className="h-5 w-5" />
+                  </button>
+                </>
+              )}
+
+            {currentView === "dashboard" &&
+              viewMode === "single" &&
+              cameras.length > 0 && (
+                <button
+                  onClick={() => setViewMode(lastMultiView)}
+                  className="mr-4 rounded-full p-2 text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+                  title={`Back to ${lastMultiView} View`}
+                >
+                  {lastMultiView === "grid" ? (
+                    <Grid className="h-5 w-5" />
+                  ) : (
+                    <Layout className="h-5 w-5" />
+                  )}
+                </button>
+              )}
+
+            {currentView === "settings" && (
               <button
-                onClick={toggleBrowserFullscreen}
-                className="mr-4 rounded-full p-2 text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
-                title="Fullscreen Mosaic View"
+                onClick={() => setCurrentView("dashboard")}
+                className="mr-4 flex items-center gap-1 rounded-md px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+                title="Back to Dashboard"
               >
-                <Fullscreen className="h-5 w-5" />
+                <ArrowLeft className="h-4 w-4" />
+                Back
               </button>
             )}
 
-            {/* "Back" button when in single view */}
-            {viewMode === "single" && cameras.length > 0 && (
-              <button
-                onClick={() => setViewMode("grid")} // Always go back to grid
-                className="mr-4 rounded-full p-2 text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
-                title={"Show Grid View"}
-              >
-                <Grid className="h-5 w-5" />
-              </button>
-            )}
-
-            <span className="mr-3 text-right text-sm font-medium text-gray-900 dark:text-white">
-              {user.email}
-            </span>
             <UserIcon className="h-8 w-8 rounded-full bg-gray-200 p-1 text-gray-600 dark:bg-gray-700 dark:text-gray-300" />
+            <HeadlessMenu as="div" className="relative ml-1">
+              <HeadlessMenu.Button className="flex rounded-full p-1 text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700">
+                <ChevronDown className="h-5 w-5" />
+              </HeadlessMenu.Button>
+              <Transition
+                as={Fragment}
+                enter="transition ease-out duration-100"
+                enterFrom="transform opacity-0 scale-95"
+                enterTo="transform opacity-100 scale-100"
+                leave="transition ease-in duration-75"
+                leaveFrom="transform opacity-100 scale-100"
+                leaveTo="transform opacity-0 scale-95"
+              >
+                <HeadlessMenu.Items className="absolute right-0 z-10 mt-2 w-56 origin-top-right rounded-md bg-white py-1 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:bg-gray-800 dark:ring-gray-700">
+                  <div className="border-b border-gray-200 px-4 py-2 dark:border-gray-700">
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      Signed in as
+                    </p>
+                    <p className="truncate text-sm font-medium text-gray-900 dark:text-white">
+                      {user.email}
+                    </p>
+                  </div>
+                  <HeadlessMenu.Item>
+                    {({ active }) => (
+                      <button
+                        onClick={() => setIsAddModalOpen(true)}
+                        className={`${
+                          active ? "bg-gray-100 dark:bg-gray-700" : ""
+                        } mt-1 flex w-full items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200`}
+                      >
+                        <PlusCircle className="mr-2 h-5 w-5" />
+                        Add Camera
+                      </button>
+                    )}
+                  </HeadlessMenu.Item>
+                  <HeadlessMenu.Item>
+                    {({ active }) => (
+                      <button
+                        onClick={() => setCurrentView("settings")}
+                        className={`${
+                          active ? "bg-gray-100 dark:bg-gray-700" : ""
+                        } flex w-full items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200`}
+                      >
+                        <Settings className="mr-2 h-5 w-5" />
+                        Settings
+                      </button>
+                    )}
+                  </HeadlessMenu.Item>
+                  <HeadlessMenu.Item>
+                    {({ active }) => (
+                      <button
+                        onClick={onLogout}
+                        className={`${
+                          active ? "bg-gray-100 dark:bg-gray-700" : ""
+                        } flex w-full items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200`}
+                      >
+                        <LogOut className="mr-2 h-5 w-5" />
+                        Logout
+                      </button>
+                    )}
+                  </HeadlessMenu.Item>
+                </HeadlessMenu.Items>
+              </Transition>
+            </HeadlessMenu>
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-8">
-          {renderMainContent()}
+        <main className="flex-1 overflow-y-auto p-8 h-full">
+          {currentView === "dashboard" ? (
+            renderDashboardContent()
+          ) : (
+            // --- 2. PASS PROPS DOWN ---
+            <SettingsPage
+              token={token}
+              user={user}
+              onLogout={onLogout}
+              onUserUpdate={onUserUpdate}
+              cameras={cameras} // <-- Pass cameras
+              onCamerasUpdate={fetchCameras} // <-- Pass refresh function
+            />
+          )}
         </main>
       </div>
 
-      {/* --- RENDER FULLSCREEN MOSAIC --- */}
-      {isFullscreen && cameras.length > 0 && (
+      {/* --- Fullscreen Modals --- */}
+      {/* ... (Unchanged) ... */}
+      {isMosaicFullscreen && cameras.length > 0 && (
         <MosaicView
           cameras={cameras}
-          onExitFullscreen={toggleBrowserFullscreen}
-          // The onCameraSelect prop is now GONE
+          onExitFullscreen={toggleMosaicFullscreen}
+        />
+      )}
+      {isGridFullscreen && cameras.length > 0 && (
+        <FullscreenGridView
+          cameras={cameras}
+          onExitFullscreen={toggleGridFullscreen}
         />
       )}
 
-      {/* --- Modals --- */}
+      {/* --- Other Modals --- */}
+      {/* ... (Unchanged) ... */}
       {isAddModalOpen && (
         <AddCameraModal
           token={token}
@@ -278,7 +436,6 @@ export default function DashboardPage({
           onCameraAdded={handleCameraAdded}
         />
       )}
-
       <ConfirmDeleteModal
         isOpen={isConfirmOpen}
         onClose={() => setIsConfirmOpen(false)}

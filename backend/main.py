@@ -2,10 +2,13 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session, joinedload
-from typing import List
+from typing import List, Optional
 import re
 import httpx
 import logging
+import asyncio
+import hashlib
+from datetime import datetime, timezone
 
 # Import our own modules
 import models
@@ -25,89 +28,41 @@ models.Base.metadata.create_all(bind=engine)
 app = FastAPI()
 
 # ====================================================================
-#                     Startup Event
-# ====================================================================
-# We are back to sourceOnDemand: True for low CPU
-@app.on_event("startup")
-async def on_startup():
-    log.info("--- STARTUP: Re-populating mediamtx ---")
-    
-    db = SessionLocal()
-    
-    all_cameras = db.query(models.Camera).all()
-    
-    if not all_cameras:
-        log.info("--- STARTUP: No cameras in database. Skipping. ---")
-        db.close()
-        return
-
-    auth = ("admin", "mysecretpassword")
-    
-    async with httpx.AsyncClient() as client:
-        for camera in all_cameras:
-            if not camera.rtsp_url:
-                log.warning(f"--- STARTUP: Skipping camera {camera.path} (no RTSP URL saved) ---")
-                continue
-
-            log.info(f"--- STARTUP: Updating camera {camera.path} ---")
-            mediamtx_url = f"http://mediamtx:9997/v3/config/paths/patch/{camera.path}"
-            
-            try:
-                response = await client.patch(
-                    mediamtx_url,
-                    auth=auth,
-                    json={
-                        "source": camera.rtsp_url, 
-                        "sourceOnDemand": True
-                    }
-                )
-                response.raise_for_status()
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 404:
-                    log.warning(f"--- STARTUP: Path {camera.path} not found, creating it... ---")
-                    add_url = f"http://mediamtx:9997/v3/config/paths/add/{camera.path}"
-                    try:
-                        add_response = await client.post(
-                            add_url,
-                            auth=auth,
-                            json={
-                                "source": camera.rtsp_url,
-                                "sourceOnDemand": True
-                            }
-                        )
-                        add_response.raise_for_status()
-                    except httpx.HTTPStatusError as add_e:
-                        log.error(f"--- STARTUP: Failed to create path {camera.path}: {add_e} ---")
-                else:
-                    log.warning(f"--- STARTUP: Failed to update camera {camera.path}: {e} ---")
-            except httpx.RequestError as e:
-                log.error(f"--- STARTUP: Could not contact mediamtx: {e} ---")
-
-    db.close()
-    log.info("--- STARTUP: mediamtx re-population complete. ---")
-
-
-# ====================================================================
 #                 CORS Middleware & Pydantic Schemas
 # ====================================================================
 # ... (Unchanged) ...
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001"
-    ],
+    allow_origins=["http://localhost:3000", "http://localhost:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# --- Schemas (Updated) ---
 class CameraBase(BaseModel): name: str
 class CameraCreate(BaseModel): name: str; rtsp_url: str
 class Camera(CameraBase):
     id: int; owner_id: int; path: str; rtsp_url: str
     class Config: from_attributes = True 
-class UserBase(BaseModel): email: str
+
+# --- 1. Schema for updating a camera ---
+class CameraUpdate(BaseModel):
+    name: str
+    rtsp_url: str
+
+# --- NEW: Schemas for Test Connection ---
+class TestConnectionRequest(BaseModel):
+    rtsp_url: str = Field(..., description="The RTSP URL to test")
+
+class TestConnectionResponse(BaseModel):
+    status: str = "ok"
+    message: str = "Connection successful"
+
+
+class UserBase(BaseModel):
+    email: str
+    display_name: Optional[str] = None
 class UserCreate(UserBase):
     password: str = Field(..., min_length=8)
     @validator('password')
@@ -116,10 +71,56 @@ class UserCreate(UserBase):
             raise ValueError('Password is too long (max 72 bytes)')
         return v
 class User(UserBase):
-    id: int; cameras: List[Camera] = []
+    id: int; cameras: List[Camera] = []; gravatar_hash: Optional[str] = None
     class Config: from_attributes = True 
+class UserUpdate(BaseModel):
+    display_name: Optional[str] = None
 class Token(BaseModel): access_token: str; token_type: str
 class TokenData(BaseModel): email: str | None = None
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=8)
+    @validator('new_password')
+    def password_byte_length(cls, v):
+        if len(v.encode('utf-8')) > 72:
+            raise ValueError('Password is too long (max 72 bytes)')
+        return v
+# ====================================================================
+#                     Startup Event
+# ====================================================================
+# ... (Unchanged) ...
+@app.on_event("startup")
+async def on_startup():
+    log.info("--- STARTUP: Re-populating mediamtx ---")
+    db = SessionLocal()
+    all_cameras = db.query(models.Camera).all()
+    if not all_cameras:
+        log.info("--- STARTUP: No cameras in database. Skipping. ---")
+        db.close()
+        return
+    auth = ("admin", "mysecretpassword")
+    async with httpx.AsyncClient() as client:
+        for camera in all_cameras:
+            if not camera.rtsp_url:
+                log.warning(f"--- STARTUP: Skipping camera {camera.path} (no RTSP URL saved) ---")
+                continue
+            log.info(f"--- STARTUP: Updating camera {camera.path} ---")
+            mediamtx_url = f"http://mediamtx:9997/v3/config/paths/patch/{camera.path}"
+            try:
+                response = await client.patch(mediamtx_url, auth=auth, json={"source": camera.rtsp_url, "sourceOnDemand": True})
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    log.warning(f"--- STARTUP: Path {camera.path} not found, creating it... ---")
+                    add_url = f"http://mediamtx:9997/v3/config/paths/add/{camera.path}"
+                    try:
+                        add_response = await client.post(add_url, auth=auth, json={"source": camera.rtsp_url, "sourceOnDemand": True})
+                        add_response.raise_for_status()
+                    except httpx.HTTPStatusError as add_e: log.error(f"--- STARTUP: Failed to create path {camera.path}: {add_e} ---")
+                else: log.warning(f"--- STARTUP: Failed to update camera {camera.path}: {e} ---")
+            except httpx.RequestError as e: log.error(f"--- STARTUP: Could not contact mediamtx: {e} ---")
+    db.close()
+    log.info("--- STARTUP: mediamtx re-population complete. ---")
 # ====================================================================
 #                 Security & Auth
 # ====================================================================
@@ -140,9 +141,19 @@ def create_access_token(data: dict):
 # ... (Unchanged) ...
 def get_user_by_email(db: Session, email: str):
     return db.query(models.User).options(joinedload(models.User.cameras)).filter(models.User.email == email).first()
+def get_gravatar_hash(email: str) -> str:
+    email_for_hash = email.strip().lower().encode('utf-8')
+    return hashlib.md5(email_for_hash).hexdigest()
 def create_user_db(db: Session, user: UserCreate):
     hashed_password = get_password_hash(user.password)
-    db_user = models.User(email=user.email, hashed_password=hashed_password)
+    gravatar_hash = get_gravatar_hash(user.email) 
+    db_user = models.User(
+        email=user.email, 
+        hashed_password=hashed_password,
+        display_name=user.display_name or user.email.split('@')[0],
+        gravatar_hash=gravatar_hash,
+        tokens_valid_from=datetime.now(timezone.utc)
+    )
     db.add(db_user)
     db.commit()
     return get_user_by_email(db, user.email)
@@ -158,17 +169,34 @@ async def get_token_data(token: str | None = Depends(oauth2_scheme)) -> TokenDat
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    revoked_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Token has been revoked", 
+        headers={"WWW-Authenticate": "Bearer"},
+    )
     if token is None: raise credentials_exception
+    db = SessionLocal()
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
-        if email is None: raise credentials_exception
+        iat_timestamp: int = payload.get("iat") 
+        if email is None or iat_timestamp is None:
+            raise credentials_exception
+        token_iat = datetime.fromtimestamp(iat_timestamp, tz=timezone.utc)
+        user = get_user_by_email(db, email=email)
+        if user is None:
+            raise credentials_exception
+        if user.tokens_valid_from and token_iat < user.tokens_valid_from.replace(tzinfo=timezone.utc):
+            raise revoked_exception
         return TokenData(email=email)
-    except JWTError: raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    finally:
+        db.close()
 # ====================================================================
 #                 API Endpoints
 # ====================================================================
-# ... (Root, register, token, users/me, api/cameras GET are unchanged) ...
+# ... (Root, register, token, users/me are unchanged) ...
 @app.get("/")
 def read_root(): return {"message": "Security Camera API is running!"}
 
@@ -185,7 +213,10 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         user = get_user_by_email(db, email=form_data.username)
         if not user or not verify_password(form_data.password, user.hashed_password):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password", headers={"WWW-Authenticate": "Bearer"},)
-        access_token_data = {"sub": user.email}
+        access_token_data = {
+            "sub": user.email,
+            "iat": datetime.now(timezone.utc)
+        }
         access_token = create_access_token(access_token_data)
         return {"access_token": access_token, "token_type": "bearer"}
     finally: db.close()
@@ -199,8 +230,10 @@ async def read_users_me(token_data: TokenData = Depends(get_token_data)):
         return user
     finally: db.close()
 
+# --- Camera Endpoints ---
 @app.get("/api/cameras", response_model=List[Camera])
 async def read_user_cameras(token_data: TokenData = Depends(get_token_data)):
+    # ... (Unchanged) ...
     db = SessionLocal()
     try:
         user = get_user_by_email(db, email=token_data.email)
@@ -211,6 +244,7 @@ async def read_user_cameras(token_data: TokenData = Depends(get_token_data)):
 
 @app.post("/api/cameras", response_model=Camera, status_code=status.HTTP_201_CREATED)
 async def create_camera_for_user(camera: CameraCreate, token_data: TokenData = Depends(get_token_data)):
+    # ... (Unchanged) ...
     db = SessionLocal()
     try:
         user = get_user_by_email(db, email=token_data.email)
@@ -258,4 +292,217 @@ async def delete_camera(camera_id: int, token_data: TokenData = Depends(get_toke
         return
     finally: db.close()
 
-# ALL REFRESH ENDPOINTS ARE GONE
+# --- 2. Update Camera Endpoint ---
+@app.put("/api/cameras/{camera_id}", response_model=Camera)
+async def update_camera(
+    camera_id: int,
+    camera_update: CameraUpdate,
+    token_data: TokenData = Depends(get_token_data)
+):
+    db = SessionLocal()
+    try:
+        user = get_user_by_email(db, email=token_data.email)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        db_camera = db.query(models.Camera).filter(
+            models.Camera.id == camera_id,
+            models.Camera.owner_id == user.id
+        ).first()
+
+        if not db_camera:
+            raise HTTPException(status_code=404, detail="Camera not found")
+
+        old_path = db_camera.path
+        new_name_changed = db_camera.name != camera_update.name
+        
+        # Update DB fields
+        db_camera.name = camera_update.name
+        db_camera.rtsp_url = camera_update.rtsp_url
+
+        auth = ("admin", "mysecretpassword")
+        async with httpx.AsyncClient() as client:
+            if new_name_changed:
+                # Name changed, so path must change. We must delete old and add new.
+                # 1. Generate new path
+                safe_name = re.sub(r'[^a-zA-Z0-9_-]', '', camera_update.name.lower().replace(" ", "_"))
+                new_path = f"user_{user.id}_{safe_name}"
+                db_camera.path = new_path
+                
+                # 2. Delete old path from mediamtx
+                log.info(f"--- UPDATING: Deleting old path {old_path} ---")
+                old_mediamtx_url = f"http://mediamtx:9997/v3/config/paths/delete/{old_path}"
+                try:
+                    await client.delete(old_mediamtx_url, auth=auth)
+                except httpx.HTTPStatusError as e:
+                     if e.response.status_code != 404: raise # Ignore if not found
+                
+                # 3. Add new path to mediamtx
+                log.info(f"--- UPDATING: Adding new path {new_path} ---")
+                new_mediamtx_url = f"http://mediamtx:9997/v3/config/paths/add/{new_path}"
+                response = await client.post(new_mediamtx_url, auth=auth, json={"source": camera_update.rtsp_url, "sourceOnDemand": True})
+                response.raise_for_status()
+
+            else:
+                # Name did not change, just update the source URL
+                log.info(f"--- UPDATING: Patching existing path {old_path} ---")
+                mediamtx_url = f"http://mediamtx:9997/v3/config/paths/patch/{old_path}"
+                response = await client.patch(mediamtx_url, auth=auth, json={"source": camera_update.rtsp_url, "sourceOnDemand": True})
+                response.raise_for_status()
+
+        db.commit()
+        db.refresh(db_camera)
+        return db_camera
+
+    except httpx.RequestError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to contact mediamtx: {e}")
+    except httpx.HTTPStatusError as e:
+        db.rollback()
+        raise HTTPException(status_code=e.response.status_code, detail=f"mediamtx error: {e.response.text}")
+    except Exception as e:
+        db.rollback()
+        log.error(f"--- Error updating camera: {e} ---")
+        raise HTTPException(status_code=500, detail="Failed to update camera")
+    finally:
+        db.close()
+
+
+# --- NEW: Test Connection Endpoint ---
+@app.post(
+    "/api/cameras/test-connection",
+    response_model=TestConnectionResponse,
+    summary="Test an RTSP connection"
+)
+async def test_rtsp_connection(
+    request: TestConnectionRequest,
+    token_data: TokenData = Depends(get_token_data) # Using your auth dependency
+):
+    """
+    Tests if an RTSP URL is valid and connectable by running ffprobe.
+    """
+    
+    # We just depend on get_token_data to ensure the user is authenticated.
+    # No need to fetch the user from the DB for this action.
+    
+    command = [
+        "ffprobe",
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=codec_type",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        request.rtsp_url,
+    ]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        # Wait for 10 seconds now
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+
+        if proc.returncode == 0 and stdout:
+            # Success: ffprobe ran and found a video stream
+            codec = stdout.decode().strip()
+            return TestConnectionResponse(
+                message=f"Connection successful! (Found {codec} stream)"
+            )
+        else:
+            # Failure: ffprobe failed
+            error_message = stderr.decode().strip().splitlines()[-1]
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Connection failed: {error_message}"
+            )
+
+    except asyncio.TimeoutError:
+        # Handle timeout
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_408_REQUEST_TIMEOUT,
+            detail="Connection test timed out. (Check URL and firewall)"
+        )
+    except FileNotFoundError:
+        # Handle if ffprobe isn't in the container's PATH
+        log.error("--- FFPROBE NOT FOUND in /test-connection endpoint ---")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="ffprobe not found. Server configuration error."
+        )
+    except Exception as e:
+        log.error(f"--- Unknown error in test_rtsp_connection: {e} ---")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unknown error occurred: {str(e)}"
+        )
+
+
+# ====================================================================
+#                 Settings Page Endpoints
+# ====================================================================
+# ... (Unchanged: update_user_me, change_password, delete_account, logout_all) ...
+@app.put("/api/users/me", response_model=User)
+async def update_user_me(user_update: UserUpdate, token_data: TokenData = Depends(get_token_data)):
+    db = SessionLocal()
+    try:
+        user = get_user_by_email(db, email=token_data.email)
+        if not user: raise HTTPException(status_code=404, detail="User not found")
+        user.display_name = user_update.display_name
+        db.commit()
+        db.refresh(user)
+        return user
+    finally: db.close()
+
+@app.post("/api/users/change-password", status_code=status.HTTP_200_OK)
+async def change_password(passwords: PasswordChange, token_data: TokenData = Depends(get_token_data)):
+    db = SessionLocal()
+    try:
+        user = get_user_by_email(db, email=token_data.email)
+        if not user: raise HTTPException(status_code=404, detail="User not found")
+        if not verify_password(passwords.current_password, user.hashed_password):
+            raise HTTPException(status_code=400, detail="Incorrect current password")
+        new_hashed_password = get_password_hash(passwords.new_password)
+        user.hashed_password = new_hashed_password
+        user.tokens_valid_from = datetime.now(timezone.utc)
+        db.commit()
+        return {"message": "Password updated successfully"}
+    finally: db.close()
+
+@app.delete("/api/users/delete-account", status_code=status.HTTP_200_OK)
+async def delete_account(token_data: TokenData = Depends(get_token_data)):
+    db = SessionLocal()
+    try:
+        user = get_user_by_email(db, email=token_data.email)
+        if not user: raise HTTPException(status_code=404, detail="User not found")
+        cameras = get_cameras_by_user(db, user_id=user.id)
+        auth = ("admin", "mysecretpassword")
+        async with httpx.AsyncClient() as client:
+            tasks = []
+            for camera in cameras:
+                mediamtx_url = f"http://mediamtx:9997/v3/config/paths/delete/{camera.path}"
+                log.info(f"--- Queuing delete for camera: {camera.path} ---")
+                tasks.append(client.delete(mediamtx_url, auth=auth))
+                db.delete(camera)
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+        db.delete(user)
+        db.commit()
+        return {"message": "Account and all associated cameras deleted successfully"}
+    finally: db.close()
+
+@app.post("/api/users/logout-all", status_code=status.HTTP_200_OK)
+async def logout_all_sessions(token_data: TokenData = Depends(get_token_data)):
+    db = SessionLocal()
+    try:
+        user = get_user_by_email(db, email=token_data.email)
+        if not user: raise HTTPException(status_code=404, detail="User not found")
+        user.tokens_valid_from = datetime.now(timezone.utc)
+        db.commit()
+        return {"message": "All other sessions have been logged out."}
+    finally: db.close()

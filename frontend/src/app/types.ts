@@ -8,4 +8,6 @@ export interface Camera {
 export interface User {
   id: number;
   email: string;
+  display_name: string | null;
+  gravatar_hash: string | null;
 }

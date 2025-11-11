@@ -2,12 +2,14 @@
 
 import React, { Fragment } from "react";
 import { Dialog, Transition } from "@headlessui/react";
+import { Loader } from "lucide-react";
 
 interface ConfirmDeleteModalProps {
   isOpen: boolean;
   onClose: () => void;
   onConfirm: () => void;
   cameraName: string;
+  isDeleting?: boolean; // <-- Add new prop
 }
 
 export default function ConfirmDeleteModal({
@@ -15,6 +17,7 @@ export default function ConfirmDeleteModal({
   onClose,
   onConfirm,
   cameraName,
+  isDeleting = false, // <-- Default to false
 }: ConfirmDeleteModalProps) {
   return (
     <Transition appear show={isOpen} as={Fragment}>
@@ -64,15 +67,21 @@ export default function ConfirmDeleteModal({
                     type="button"
                     className="rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-900 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600"
                     onClick={onClose}
+                    disabled={isDeleting}
                   >
                     Cancel
                   </button>
                   <button
                     type="button"
-                    className="rounded-lg bg-red-600 px-5 py-2.5 text-center text-sm font-medium text-white hover:bg-red-700"
+                    className="flex w-24 items-center justify-center rounded-lg bg-red-600 px-5 py-2.5 text-center text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
                     onClick={onConfirm}
+                    disabled={isDeleting}
                   >
-                    Delete
+                    {isDeleting ? (
+                      <Loader className="h-5 w-5 animate-spin" />
+                    ) : (
+                      "Delete"
+                    )}
                   </button>
                 </div>
               </Dialog.Panel>

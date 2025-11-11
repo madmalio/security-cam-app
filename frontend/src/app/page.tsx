@@ -53,6 +53,11 @@ export default function Page() {
     toast.success("You have been logged out.");
   };
 
+  // --- 1. NEW: Function to update user state ---
+  const handleUserUpdate = (updatedUser: User) => {
+    setUser(updatedUser);
+  };
+
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gray-100 dark:bg-gray-900">
@@ -69,7 +74,13 @@ export default function Page() {
       {!isLoggedIn ? (
         <AuthPage onLoginSuccess={handleLogin} />
       ) : (
-        <DashboardPage token={token} user={user} onLogout={handleLogout} />
+        // --- 2. UPDATED: Pass new props ---
+        <DashboardPage
+          token={token}
+          user={user}
+          onLogout={handleLogout}
+          onUserUpdate={handleUserUpdate}
+        />
       )}
     </main>
   );
