@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { Camera } from "@/app/types";
 import LiveCameraView from "./LiveCameraView";
+import MosaicLiveView from "./MosaicLiveView";
 import { Pause, Play, X, ArrowLeft } from "lucide-react";
 
 interface MosaicViewProps {
@@ -89,72 +90,70 @@ export default function MosaicView({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-gray-900 p-4">
+    // --- THIS IS THE FIX ---
+    // Changed bg-gray-900 to bg-black
+    <div className="fixed inset-0 z-50 bg-black p-4 flex items-center justify-center">
       {mosaicMode === "focus" && focusedCamera ? (
-        // --- THIS IS THE FIX ---
-        // This flex container will center the video
-        <div className="w-full h-full flex items-center justify-center">
-          {/* This relative container holds the video and the back button */}
-          <div className="w-full max-w-full max-h-full aspect-video relative group">
-            <LiveCameraView camera={focusedCamera} isMuted={false} />
-
-            {/* Back button is an overlay */}
-            <button
-              onClick={handleGoBackToGrid}
-              className="absolute top-2 left-2 z-20 flex items-center gap-2 rounded-full p-2 text-white/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-white/10 hover:text-white"
-              title="Back to Mosaic View"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </button>
-          </div>
+        // --- SINGLE FOCUS VIEW ---
+        <div className="w-full max-w-full max-h-full aspect-video relative group">
+          <MosaicLiveView camera={focusedCamera} isMuted={false} />
+          <button
+            onClick={handleGoBackToGrid}
+            className="absolute top-2 left-2 z-20 flex items-center gap-2 rounded-full p-2 text-white/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-white/10 hover:text-white"
+            title="Back to Mosaic View"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </button>
         </div>
       ) : (
         // --- 1+5 GRID VIEW ---
-        <div className="grid grid-cols-3 grid-rows-3 gap-2 h-full">
-          {/* Main Focus View */}
-          <div
-            className={`col-span-2 row-span-2 relative rounded-lg shadow-lg overflow-hidden group`}
-          >
+        <div className="w-full max-w-full max-h-full aspect-video">
+          <div className="grid grid-cols-3 grid-rows-3 gap-2 h-full">
+            {/* Main Focus View */}
             <div
-              className="absolute inset-0 z-10 cursor-pointer"
-              onClick={() => handleCameraClick(mainCamera)}
-              title={`Focus on ${mainCamera.name}`}
-            />
-            <LiveCameraView camera={mainCamera} isMuted={false} />
-            <div className="absolute bottom-0 left-0 w-full bg-black/50 p-2 pointer-events-none">
-              <p className="truncate text-sm font-medium text-white">
-                {mainCamera.name}
-              </p>
+              className={`col-span-2 row-span-2 relative rounded-lg shadow-lg overflow-hidden group`}
+            >
+              <div
+                className="absolute inset-0 z-10 cursor-pointer"
+                onClick={() => handleCameraClick(mainCamera)}
+                title={`Focus on ${mainCamera.name}`}
+              />
+              <LiveCameraView camera={mainCamera} isMuted={false} />
+              <div className="absolute bottom-0 left-0 w-full bg-black/50 p-2 pointer-events-none">
+                <p className="truncate text-sm font-medium text-white">
+                  {mainCamera.name}
+                </p>
+              </div>
+              {/* Control buttons */}
+              <div className="absolute top-2 right-2 z-20 flex gap-2">
+                <button
+                  onClick={() => setIsCycling(!isCycling)}
+                  className="rounded-full bg-black/50 p-2 text-white hover:bg-black/80"
+                  title={isCycling ? "Pause Auto-Cycle" : "Play Auto-Cycle"}
+                >
+                  {isCycling ? (
+                    <Pause className="h-5 w-5" />
+                  ) : (
+                    <Play className="h-5 w-5" />
+                  )}
+                </button>
+                <button
+                  onClick={onExitFullscreen}
+                  className="rounded-full bg-black/50 p-2 text-white hover:bg-black/80"
+                  title="Exit Fullscreen"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
             </div>
-            {/* Control buttons */}
-            <div className="absolute top-2 right-2 z-20 flex gap-2">
-              <button
-                onClick={() => setIsCycling(!isCycling)}
-                className="rounded-full bg-black/50 p-2 text-white hover:bg-black/80"
-                title={isCycling ? "Pause Auto-Cycle" : "Play Auto-Cycle"}
-              >
-                {isCycling ? (
-                  <Pause className="h-5 w-5" />
-                ) : (
-                  <Play className="h-5 w-5" />
-                )}
-              </button>
-              <button
-                onClick={onExitFullscreen}
-                className="rounded-full bg-black/50 p-2 text-white hover:bg-black/80"
-                title="Exit Fullscreen"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-          </div>
 
-          {/* Small Views */}
-          <CameraTile camera={otherCameras[0]} />
-          <CameraTile camera={otherCameras[1]} />
-          <CameraTile camera={otherCameras[2]} />
-          <CameraTile camera={otherCameras[3]} />
-          <CameraTile camera={otherCameras[4]} />
+            {/* Small Views */}
+            <CameraTile camera={otherCameras[0]} />
+            <CameraTile camera={otherCameras[1]} />
+            <CameraTile camera={otherCameras[2]} />
+            <CameraTile camera={otherCameras[3]} />
+            <CameraTile camera={otherCameras[4]} />
+          </div>
         </div>
       )}
     </div>

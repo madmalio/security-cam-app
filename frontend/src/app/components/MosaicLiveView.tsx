@@ -2,26 +2,25 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { Camera } from "@/app/types";
-import { Loader, AlertTriangle, Video, Maximize, Minimize } from "lucide-react";
+import { Loader, AlertTriangle, Video } from "lucide-react";
 
 // --- Constants ---
 const MEDIAMTX_URL = "http://localhost:8888";
 
-interface LiveCameraViewProps {
+interface MosaicLiveViewProps {
   camera: Camera | null;
   isMuted?: boolean;
 }
 
-export default function LiveCameraView({
+// This is a new component, almost identical to LiveCameraView
+// but without the aspect-ratio constraint, so it can fill its parent.
+export default function MosaicLiveView({
   camera,
   isMuted = true,
-}: LiveCameraViewProps) {
+}: MosaicLiveViewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const [connectionState, setConnectionState] = useState("idle");
-
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
     if (!camera) {
@@ -88,53 +87,22 @@ export default function LiveCameraView({
     };
   }, [camera]);
 
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
-    };
-
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
-
-    return () => {
-      document.removeEventListener("fullscreenchange", handleFullscreenChange);
-    };
-  }, []);
-
-  const toggleFullscreen = () => {
-    if (!containerRef.current) return;
-
-    if (isFullscreen) {
-      if (document.exitFullscreen) {
-        document.exitFullscreen();
-      }
-    } else {
-      if (containerRef.current.requestFullscreen) {
-        containerRef.current.requestFullscreen();
-      }
-    }
-  };
-
   const ConnectionStatus = () => {
     let icon, text;
     switch (connectionState) {
-      // --- THIS IS THE FIX ---
-      // We no longer show a "Connecting" spinner.
-      // This will feel like an "instant cut".
       case "connecting":
       case "new":
-        return null;
-      // ---------------------
-
+        icon = <Loader className="h-12 w-12 animate-spin text-white" />;
+        text = "Connecting...";
+        break;
       case "connected":
         return null;
-
       case "failed":
       case "disconnected":
       case "closed":
         icon = <AlertTriangle className="h-12 w-12 text-red-400" />;
         text = "Connection Failed";
         break;
-
       default:
         icon = <Video className="h-12 w-12 text-gray-400" />;
         text = "Select a camera to view";
@@ -149,10 +117,9 @@ export default function LiveCameraView({
   };
 
   return (
-    <div
-      ref={containerRef}
-      className="relative aspect-video w-full rounded-lg bg-black shadow-lg group"
-    >
+    // --- THIS IS THE KEY ---
+    // No "aspect-video", added "h-full" to fill its parent.
+    <div className="relative w-full h-full rounded-lg bg-black shadow-lg group">
       <video
         ref={videoRef}
         autoPlay
@@ -163,16 +130,7 @@ export default function LiveCameraView({
         }`}
       />
       <ConnectionStatus />
-
-      {connectionState === "connected" && !isFullscreen && (
-        <button
-          onClick={toggleFullscreen}
-          className="absolute bottom-2 right-2 rounded-full bg-black/50 p-2 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-black/80"
-          title="Enter Fullscreen"
-        >
-          <Maximize className="h-5 w-5" />
-        </button>
-      )}
+      {/* Removed the fullscreen button, as this is only for mosaic */}
     </div>
   );
 }
