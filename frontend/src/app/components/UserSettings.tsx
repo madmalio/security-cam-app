@@ -3,8 +3,9 @@
 import React, { useState, FormEvent, useEffect } from "react";
 import { toast } from "sonner";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
-import { Loader, ShieldCheck } from "lucide-react"; // <-- 1. IMPORT ICON
+import { Loader, ShieldCheck } from "lucide-react";
 import { User } from "@/app/types";
+import ActiveSessions from "./ActiveSessions"; // <-- 1. IMPORT NEW COMPONENT
 
 // --- Constants ---
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
@@ -29,7 +30,6 @@ export default function UserSettings({
   const [newPassword, setNewPassword] = useState("");
   const [isChangingPass, setIsChangingPass] = useState(false);
 
-  // --- 2. NEW: State for logout all ---
   const [isLoggingOutAll, setIsLoggingOutAll] = useState(false);
 
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
@@ -109,7 +109,6 @@ export default function UserSettings({
     }
   };
 
-  // --- 3. NEW: Handler for logging out all sessions ---
   const handleLogoutAll = async () => {
     setIsLoggingOutAll(true);
     try {
@@ -128,7 +127,6 @@ export default function UserSettings({
       toast.success(
         "All other sessions have been logged out. Logging this device out."
       );
-      // This action invalidates the *current* token, so we must log out.
       setTimeout(() => {
         onLogout();
       }, 2000);
@@ -226,7 +224,6 @@ export default function UserSettings({
           Change Password
         </h2>
         <form onSubmit={handleChangePassword} className="mt-4 space-y-4">
-          {/* ... (form inputs unchanged) ... */}
           <div>
             <label
               htmlFor="current-pass"
@@ -276,15 +273,17 @@ export default function UserSettings({
         </form>
       </div>
 
-      {/* --- 4. NEW: Security Card (in correct position) --- */}
+      {/* --- 4. RENDER NEW COMPONENT --- */}
+      <ActiveSessions token={token} user={user} />
+
+      {/* Security Card (Logout All) */}
       <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
         <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-          Security
+          Sign out all other sessions
         </h2>
         <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-          Log out from all other browsers and devices. This will invalidate all
-          sessions, including your current one, and you will need to log in
-          again.
+          This will invalidate all sessions, including your current one, and you
+          will need to log in again.
         </p>
         <div className="flex justify-end mt-4">
           <button

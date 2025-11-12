@@ -19,7 +19,6 @@ import {
 } from "lucide-react";
 import { Menu as HeadlessMenu, Transition } from "@headlessui/react";
 
-// Import all other components...
 import LiveCameraView from "./LiveCameraView";
 import CameraGridView from "./CameraGridView";
 import FocusView from "./FocusView";
@@ -29,7 +28,6 @@ import AddCameraModal from "./AddCameraModal";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import SettingsPage from "./SettingsPage";
 
-// --- Constants ---
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 interface DashboardPageProps {
@@ -49,17 +47,14 @@ export default function DashboardPage({
   const [selectedCamera, setSelectedCamera] = useState<Camera | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [cameraToDelete, setCameraToDelete] = useState<Camera | null>(null);
 
   const [currentView, setCurrentView] = useState<"dashboard" | "settings">(
     "dashboard"
   );
-
   const [viewMode, setViewMode] = useState<"single" | "grid" | "focus">("grid");
   const [lastMultiView, setLastMultiView] = useState<"grid" | "focus">("grid");
-
   const [isMosaicFullscreen, setIsMosaicFullscreen] = useState(false);
   const [isGridFullscreen, setIsGridFullscreen] = useState(false);
 
@@ -82,7 +77,6 @@ export default function DashboardPage({
     };
   }, []);
 
-  // --- 1. EXTRACTED fetchCameras ---
   const fetchCameras = async () => {
     try {
       setError(null);
@@ -95,7 +89,7 @@ export default function DashboardPage({
         throw new Error("Failed to fetch cameras");
       }
       const data: Camera[] = await response.json();
-      setCameras(data);
+      setCameras(data.sort((a, b) => a.display_order - b.display_order));
       if (data.length > 0 && !selectedCamera) {
         setSelectedCamera(data[0]);
       }
@@ -105,12 +99,11 @@ export default function DashboardPage({
     }
   };
 
-  // Fetch cameras on mount
   useEffect(() => {
     if (currentView === "dashboard") {
       fetchCameras();
     }
-  }, [token, currentView]); // <-- Refetch when returning to dashboard
+  }, [token, currentView]);
 
   const toggleMosaicFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -137,9 +130,15 @@ export default function DashboardPage({
   };
 
   const handleCameraAdded = (newCamera: Camera) => {
-    setCameras((prevCameras) => [...prevCameras, newCamera]);
-    setSelectedCamera(newCamera);
-    setViewMode("single");
+    // --- THIS IS THE FIX ---
+    // We update the camera list and stay on the current view
+    setCameras((prevCameras) =>
+      [...prevCameras, newCamera].sort(
+        (a, b) => a.display_order - b.display_order
+      )
+    );
+    // We no longer switch to "single" view
+    // setViewMode("single");
     toast.success(`"${newCamera.name}" was added successfully!`);
   };
 
@@ -156,7 +155,6 @@ export default function DashboardPage({
   };
 
   const handleDeleteCamera = async (cameraToDelete: Camera) => {
-    // ... (logic unchanged) ...
     const originalCameras = [...cameras];
     const originalSelected = selectedCamera;
 
@@ -205,7 +203,6 @@ export default function DashboardPage({
   };
 
   const renderDashboardContent = () => {
-    // ... (logic unchanged) ...
     if (cameras.length === 0) {
       return (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -224,9 +221,11 @@ export default function DashboardPage({
         </div>
       );
     }
+
     if (viewMode === "single") {
       return <LiveCameraView camera={selectedCamera} isMuted={false} />;
     }
+
     if (viewMode === "focus") {
       return (
         <FocusView
@@ -237,10 +236,12 @@ export default function DashboardPage({
         />
       );
     }
+
     return (
       <CameraGridView
         cameras={cameras}
         onCameraSelect={handleSelectAndGoToSingle}
+        onAddCameraClick={() => setIsAddModalOpen(true)} // <-- Pass the function
       />
     );
   };
@@ -249,7 +250,6 @@ export default function DashboardPage({
     <div className="flex h-screen w-full bg-gray-100 dark:bg-gray-900">
       <div className={`relative flex flex-1 flex-col overflow-hidden`}>
         <header className="flex h-16 flex-shrink-0 items-center justify-between border-b border-gray-200 bg-white px-8 dark:border-gray-700 dark:bg-gray-800">
-          {/* ... (Header logic unchanged) ... */}
           <div className="flex items-center gap-4">
             <Video className="h-8 w-8 text-blue-600 dark:text-blue-500" />
             <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">
@@ -399,27 +399,25 @@ export default function DashboardPage({
           {currentView === "dashboard" ? (
             renderDashboardContent()
           ) : (
-            // --- 2. PASS PROPS DOWN ---
             <SettingsPage
               token={token}
               user={user}
               onLogout={onLogout}
               onUserUpdate={onUserUpdate}
-              cameras={cameras} // <-- Pass cameras
-              onCamerasUpdate={fetchCameras} // <-- Pass refresh function
+              cameras={cameras}
+              onCamerasUpdate={fetchCameras}
             />
           )}
         </main>
       </div>
 
-      {/* --- Fullscreen Modals --- */}
-      {/* ... (Unchanged) ... */}
       {isMosaicFullscreen && cameras.length > 0 && (
         <MosaicView
           cameras={cameras}
           onExitFullscreen={toggleMosaicFullscreen}
         />
       )}
+
       {isGridFullscreen && cameras.length > 0 && (
         <FullscreenGridView
           cameras={cameras}
@@ -427,8 +425,6 @@ export default function DashboardPage({
         />
       )}
 
-      {/* --- Other Modals --- */}
-      {/* ... (Unchanged) ... */}
       {isAddModalOpen && (
         <AddCameraModal
           token={token}

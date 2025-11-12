@@ -15,6 +15,7 @@ class User(Base):
     tokens_valid_from = Column(DateTime, default=datetime.datetime.utcnow)
 
     cameras = relationship("Camera", back_populates="owner", cascade="all, delete-orphan")
+    sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
 
 class Camera(Base):
     __tablename__ = "cameras"
@@ -24,5 +25,18 @@ class Camera(Base):
     path = Column(String, unique=True)
     rtsp_url = Column(String)
     owner_id = Column(Integer, ForeignKey("users.id"))
+    display_order = Column(Integer, default=0)
 
     owner = relationship("User", back_populates="cameras")
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    jti = Column(String, unique=True, index=True) # JWT ID
+    user_id = Column(Integer, ForeignKey("users.id"))
+    user_agent = Column(String, nullable=True)
+    ip_address = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    
+    user = relationship("User", back_populates="sessions")

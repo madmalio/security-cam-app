@@ -21,12 +21,15 @@ services:
       - "8080:8080"
     env_file:
       - ./backend/.env
+    # --- ADD THIS SECTION ---
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # ------------------------
     depends_on:
       db:
         condition: service_healthy
       mediamtx:
         condition: service_started
-    # The 'volumes: [- snapshots-data:/snapshots]' line is GONE
     networks:
       - cam_net
     restart: always
@@ -62,7 +65,6 @@ services:
       - "8887:8887" # HLS
     volumes:
       - ./mediamtx.yml:/mediamtx.yml
-      # The 'snapshots-data:/snapshots' line is GONE
     networks:
       - cam_net
 
@@ -72,4 +74,3 @@ networks:
 
 volumes:
   db_data:
-  # The 'snapshots-data' volume is GONE
