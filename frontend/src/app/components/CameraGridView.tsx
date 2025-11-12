@@ -3,21 +3,33 @@
 import React from "react";
 import { Camera } from "@/app/types";
 import LiveCameraView from "./LiveCameraView";
-import AddCameraBox from "./AddCameraBox"; // <-- 1. Import new component
+import AddCameraBox from "./AddCameraBox";
+import { GridColumns } from "@/app/contexts/SettingsContext"; // <-- 1. IMPORT
 
 interface CameraGridViewProps {
   cameras: Camera[];
   onCameraSelect: (camera: Camera) => void;
-  onAddCameraClick: () => void; // <-- 2. Add this prop
+  onAddCameraClick: () => void;
+  gridColumns: GridColumns; // <-- 2. ADD PROP
 }
 
 export default function CameraGridView({
   cameras,
   onCameraSelect,
-  onAddCameraClick, // <-- 3. Receive this prop
+  onAddCameraClick,
+  gridColumns, // <-- 3. RECEIVE PROP
 }: CameraGridViewProps) {
+  // --- 4. DYNAMIC GRID CLASSES ---
+  const gridClassMap = {
+    3: "lg:grid-cols-3",
+    4: "lg:grid-cols-4",
+    5: "lg:grid-cols-5",
+  };
+  // Fallback to 4 if something is wrong
+  const gridLayout = gridClassMap[gridColumns] || "lg:grid-cols-4";
+
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+    <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 ${gridLayout}`}>
       {cameras.map((cam) => (
         <div
           key={cam.id}
@@ -37,7 +49,6 @@ export default function CameraGridView({
         </div>
       ))}
 
-      {/* --- 4. Render the new box --- */}
       <AddCameraBox onClick={onAddCameraClick} />
     </div>
   );

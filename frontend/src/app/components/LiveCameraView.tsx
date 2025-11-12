@@ -20,6 +20,10 @@ export default function LiveCameraView({
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const [connectionState, setConnectionState] = useState("idle");
 
+  // --- 1. NEW: State to trigger a reconnect ---
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -27,6 +31,12 @@ export default function LiveCameraView({
     if (!camera) {
       setConnectionState("idle");
       return;
+    }
+
+    // Clear any pending retry timeouts
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
     }
 
     const connect = async () => {
@@ -38,8 +48,27 @@ export default function LiveCameraView({
       try {
         const pc = new RTCPeerConnection();
         peerConnectionRef.current = pc;
-        pc.onconnectionstatechange = () =>
-          setConnectionState(pc.connectionState);
+
+        // --- 2. UPDATED: Add auto-reconnect logic ---
+        pc.onconnectionstatechange = () => {
+          const state = pc.connectionState;
+          setConnectionState(state);
+
+          // If it fails or disconnects, schedule a retry
+          if (
+            state === "failed" ||
+            state === "disconnected" ||
+            state === "closed"
+          ) {
+            // Only retry if we're not already trying
+            if (!retryTimeoutRef.current) {
+              retryTimeoutRef.current = setTimeout(() => {
+                setRetryAttempt((prev) => prev + 1); // Trigger the useEffect
+              }, 3000); // Wait 3 seconds before retrying
+            }
+          }
+        };
+
         pc.addTransceiver("video", { direction: "recvonly" });
         pc.ontrack = (event) => {
           if (videoRef.current && event.streams.length > 0) {
@@ -82,11 +111,15 @@ export default function LiveCameraView({
     connect();
 
     return () => {
+      // Clear timeouts and close connections on unmount
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+      }
       if (peerConnectionRef.current) {
         peerConnectionRef.current.close();
       }
     };
-  }, [camera]);
+  }, [camera, retryAttempt]); // <-- 3. Add retryAttempt to dependency array
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -117,13 +150,10 @@ export default function LiveCameraView({
   const ConnectionStatus = () => {
     let icon, text;
     switch (connectionState) {
-      // --- THIS IS THE FIX ---
-      // We no longer show a "Connecting" spinner.
-      // This will feel like an "instant cut".
       case "connecting":
       case "new":
+        // No spinner, just a black box
         return null;
-      // ---------------------
 
       case "connected":
         return null;
@@ -149,6 +179,7 @@ export default function LiveCameraView({
   };
 
   return (
+    // This component has aspect-video, which is correct for the dashboard
     <div
       ref={containerRef}
       className="relative aspect-video w-full rounded-lg bg-black shadow-lg group"

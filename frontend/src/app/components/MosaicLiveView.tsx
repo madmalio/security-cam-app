@@ -12,8 +12,6 @@ interface MosaicLiveViewProps {
   isMuted?: boolean;
 }
 
-// This is a new component, almost identical to LiveCameraView
-// but without the aspect-ratio constraint, so it can fill its parent.
 export default function MosaicLiveView({
   camera,
   isMuted = true,
@@ -22,10 +20,20 @@ export default function MosaicLiveView({
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const [connectionState, setConnectionState] = useState("idle");
 
+  // --- 1. NEW: State to trigger a reconnect ---
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
     if (!camera) {
       setConnectionState("idle");
       return;
+    }
+
+    // Clear any pending retry timeouts
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
     }
 
     const connect = async () => {
@@ -37,8 +45,27 @@ export default function MosaicLiveView({
       try {
         const pc = new RTCPeerConnection();
         peerConnectionRef.current = pc;
-        pc.onconnectionstatechange = () =>
-          setConnectionState(pc.connectionState);
+
+        // --- 2. UPDATED: Add auto-reconnect logic ---
+        pc.onconnectionstatechange = () => {
+          const state = pc.connectionState;
+          setConnectionState(state);
+
+          // If it fails or disconnects, schedule a retry
+          if (
+            state === "failed" ||
+            state === "disconnected" ||
+            state === "closed"
+          ) {
+            // Only retry if we're not already trying
+            if (!retryTimeoutRef.current) {
+              retryTimeoutRef.current = setTimeout(() => {
+                setRetryAttempt((prev) => prev + 1); // Trigger the useEffect
+              }, 3000); // Wait 3 seconds before retrying
+            }
+          }
+        };
+
         pc.addTransceiver("video", { direction: "recvonly" });
         pc.ontrack = (event) => {
           if (videoRef.current && event.streams.length > 0) {
@@ -81,28 +108,34 @@ export default function MosaicLiveView({
     connect();
 
     return () => {
+      // Clear timeouts and close connections on unmount
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+      }
       if (peerConnectionRef.current) {
         peerConnectionRef.current.close();
       }
     };
-  }, [camera]);
+  }, [camera, retryAttempt]); // <-- 3. Add retryAttempt to dependency array
 
   const ConnectionStatus = () => {
     let icon, text;
     switch (connectionState) {
       case "connecting":
       case "new":
-        icon = <Loader className="h-12 w-12 animate-spin text-white" />;
-        text = "Connecting...";
-        break;
+        // No spinner, just a black box
+        return null;
+
       case "connected":
         return null;
+
       case "failed":
       case "disconnected":
       case "closed":
         icon = <AlertTriangle className="h-12 w-12 text-red-400" />;
         text = "Connection Failed";
         break;
+
       default:
         icon = <Video className="h-12 w-12 text-gray-400" />;
         text = "Select a camera to view";
@@ -117,8 +150,7 @@ export default function MosaicLiveView({
   };
 
   return (
-    // --- THIS IS THE KEY ---
-    // No "aspect-video", added "h-full" to fill its parent.
+    // This div fills its parent
     <div className="relative w-full h-full rounded-lg bg-black shadow-lg group">
       <video
         ref={videoRef}
@@ -130,7 +162,6 @@ export default function MosaicLiveView({
         }`}
       />
       <ConnectionStatus />
-      {/* Removed the fullscreen button, as this is only for mosaic */}
     </div>
   );
 }

@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useState, FormEvent, Fragment } from "react"; // <-- 1. IMPORT FRAGMENT
+import React, { useState, FormEvent, Fragment } from "react";
 import { Camera } from "@/app/types";
-import { Loader, Wifi } from "lucide-react"; // <-- 2. IMPORT Wifi
+import { Loader, Wifi } from "lucide-react";
 import { toast } from "sonner";
-import TestStreamModal from "./TestStreamModal"; // <-- 3. IMPORT TEST MODAL
+import TestStreamModal from "./TestStreamModal";
 
 // --- Constants ---
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
@@ -25,12 +25,10 @@ export default function AddCameraModal({
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // --- 4. ADD NEW STATE ---
   const [isTesting, setIsTesting] = useState(false);
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
   const [testStreamPath, setTestStreamPath] = useState<string | null>(null);
 
-  // --- 5. ADD TEST HANDLER ---
   const handleTestConnection = async () => {
     if (!rtspUrl) {
       toast.error("Please enter an RTSP URL to test.");
@@ -143,8 +141,10 @@ export default function AddCameraModal({
                 className="w-full rounded-md border border-gray-300 p-2.5 focus:border-blue-500 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
               />
             </div>
-            {/* --- 6. UPDATED: Button Layout --- */}
-            <div className="flex justify-between space-x-3">
+
+            {/* --- THIS IS THE FIX --- */}
+            {/* Changed from justify-between to justify-end */}
+            <div className="flex justify-end space-x-3">
               <button
                 type="button"
                 onClick={handleTestConnection}
@@ -160,32 +160,29 @@ export default function AddCameraModal({
                   </>
                 )}
               </button>
-              <div className="flex space-x-3">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-900 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isLoading || isTesting}
-                  className="flex w-28 items-center justify-center rounded-lg bg-blue-600 px-5 py-2.5 text-center text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {isLoading ? (
-                    <Loader className="h-5 w-5 animate-spin" />
-                  ) : (
-                    "Save"
-                  )}
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-900 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isLoading || isTesting}
+                className="flex w-28 items-center justify-center rounded-lg bg-blue-600 px-5 py-2.5 text-center text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {isLoading ? (
+                  <Loader className="h-5 w-5 animate-spin" />
+                ) : (
+                  "Save"
+                )}
+              </button>
             </div>
           </form>
         </div>
       </div>
 
-      {/* --- 7. RENDER THE MODAL --- */}
       <TestStreamModal
         isOpen={isTestModalOpen}
         onClose={() => setIsTestModalOpen(false)}

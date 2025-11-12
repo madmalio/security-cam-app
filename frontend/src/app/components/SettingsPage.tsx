@@ -3,8 +3,9 @@
 import React, { useState } from "react";
 import { User, Camera, Palette, Grid } from "lucide-react";
 import UserSettings from "./UserSettings";
-import CameraSettings from "./CameraSettings"; // <-- 1. IMPORT
-import { User as UserType, Camera as CameraType } from "@/app/types"; // <-- 2. IMPORT CAMERA TYPE
+import CameraSettings from "./CameraSettings";
+import AppearanceSettings from "./AppearanceSettings"; // <-- 1. IMPORT
+import { User as UserType, Camera as CameraType } from "@/app/types";
 
 type SettingsSection = "user" | "cameras" | "appearance" | "grid";
 
@@ -13,8 +14,8 @@ interface SettingsPageProps {
   user: UserType;
   onLogout: () => void;
   onUserUpdate: (user: UserType) => void;
-  cameras: CameraType[]; // <-- 3. ADD PROPS
-  onCamerasUpdate: () => void; // <-- 3. ADD PROPS
+  cameras: CameraType[];
+  onCamerasUpdate: () => void;
 }
 
 export default function SettingsPage({
@@ -59,13 +60,12 @@ export default function SettingsPage({
       {/* Left Navigation */}
       <nav className="flex w-full flex-row gap-2 md:w-1/5 md:flex-col">
         <NavItem label="User" icon={User} section="user" />
-        <NavItem label="Cameras" icon={Camera} section="cameras" />{" "}
-        {/* <-- 4. UNLOCKED */}
+        <NavItem label="Cameras" icon={Camera} section="cameras" />
         <NavItem
           label="Appearance"
           icon={Palette}
           section="appearance"
-          disabled
+          // disabled is removed
         />
         <NavItem label="Grid" icon={Grid} section="grid" disabled />
       </nav>
@@ -80,7 +80,6 @@ export default function SettingsPage({
             onUserUpdate={onUserUpdate}
           />
         )}
-        {/* --- 5. RENDER NEW COMPONENT --- */}
         {currentSection === "cameras" && (
           <CameraSettings
             token={token}
@@ -88,6 +87,8 @@ export default function SettingsPage({
             onCamerasUpdate={onCamerasUpdate}
           />
         )}
+        {/* --- 2. RENDER NEW COMPONENT --- */}
+        {currentSection === "appearance" && <AppearanceSettings />}
       </div>
     </div>
   );

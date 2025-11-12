@@ -69,7 +69,7 @@ export default function Page() {
 
   return (
     <main>
-      <Toaster position="top-right" richColors />
+      <Toaster position="top-center" richColors />
       {!isLoggedIn ? (
         <AuthPage onLoginSuccess={handleLogin} />
       ) : (

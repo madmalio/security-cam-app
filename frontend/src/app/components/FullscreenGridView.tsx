@@ -3,17 +3,20 @@
 import React, { useState } from "react";
 import { Camera } from "@/app/types";
 import LiveCameraView from "./LiveCameraView";
-import MosaicLiveView from "./MosaicLiveView";
+import FullscreenLiveView from "./FullscreenLiveView";
 import { X, ArrowLeft } from "lucide-react";
+import { GridColumns } from "@/app/contexts/SettingsContext"; // <-- 1. IMPORT
 
 interface FullscreenGridViewProps {
   cameras: Camera[];
   onExitFullscreen: () => void;
+  gridColumns: GridColumns; // <-- 2. ADD PROP
 }
 
 export default function FullscreenGridView({
   cameras,
   onExitFullscreen,
+  gridColumns, // <-- 3. RECEIVE PROP
 }: FullscreenGridViewProps) {
   const [mode, setMode] = useState<"grid" | "focus">("grid");
   const [focusedCamera, setFocusedCamera] = useState<Camera | null>(null);
@@ -56,12 +59,20 @@ export default function FullscreenGridView({
     );
   };
 
+  // --- 4. DYNAMIC GRID CLASSES ---
+  const gridClassMap = {
+    3: "lg:grid-cols-3",
+    4: "lg:grid-cols-4",
+    5: "lg:grid-cols-5",
+  };
+  const gridLayout = gridClassMap[gridColumns] || "lg:grid-cols-4";
+
   return (
     <div className="fixed inset-0 z-50 bg-black p-4 flex items-center justify-center">
       {mode === "focus" && focusedCamera ? (
         // --- SINGLE FOCUS VIEW ---
         <div className="w-full max-w-full max-h-full aspect-video relative group">
-          <MosaicLiveView camera={focusedCamera} isMuted={false} />
+          <FullscreenLiveView camera={focusedCamera} isMuted={false} />
           <button
             onClick={handleGoBackToGrid}
             className="absolute top-2 left-2 z-20 flex items-center gap-2 rounded-full p-2 text-white/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-white/10 hover:text-white"
@@ -85,9 +96,9 @@ export default function FullscreenGridView({
           </div>
           {/* Scrollable Grid Container */}
           <div className="w-full h-[calc(100%-40px)] overflow-y-auto">
-            {/* --- THIS IS THE FIX --- */}
-            {/* Changed to max 3 columns for bigger views */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            <div
+              className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 ${gridLayout}`}
+            >
               {cameras.map((camera) => (
                 <CameraTile key={camera.id} camera={camera} />
               ))}

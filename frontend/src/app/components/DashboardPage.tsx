@@ -18,7 +18,9 @@ import {
   ArrowLeft,
 } from "lucide-react";
 import { Menu as HeadlessMenu, Transition } from "@headlessui/react";
+import { useSettings } from "@/app/contexts/SettingsContext"; // <-- 1. IMPORT
 
+// ... (other imports)
 import LiveCameraView from "./LiveCameraView";
 import CameraGridView from "./CameraGridView";
 import FocusView from "./FocusView";
@@ -49,21 +51,30 @@ export default function DashboardPage({
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [cameraToDelete, setCameraToDelete] = useState<Camera | null>(null);
-
   const [currentView, setCurrentView] = useState<"dashboard" | "settings">(
     "dashboard"
   );
-  const [viewMode, setViewMode] = useState<"single" | "grid" | "focus">("grid");
-  const [lastMultiView, setLastMultiView] = useState<"grid" | "focus">("grid");
+
+  // --- 2. USE SETTINGS ---
+  const { defaultView, gridColumns } = useSettings();
+
+  const [viewMode, setViewMode] = useState<"single" | "grid" | "focus">(
+    defaultView
+  );
+  const [lastMultiView, setLastMultiView] = useState<"grid" | "focus">(
+    defaultView
+  );
+
   const [isMosaicFullscreen, setIsMosaicFullscreen] = useState(false);
   const [isGridFullscreen, setIsGridFullscreen] = useState(false);
 
+  // --- 3. Sync state with context if it changes ---
   useEffect(() => {
-    if (viewMode === "grid" || viewMode === "focus") {
-      setLastMultiView(viewMode);
-    }
-  }, [viewMode]);
+    setViewMode(defaultView);
+    setLastMultiView(defaultView);
+  }, [defaultView]);
 
+  // ... (other useEffects are unchanged) ...
   useEffect(() => {
     const handleFullscreenChange = () => {
       if (!document.fullscreenElement) {
@@ -105,6 +116,7 @@ export default function DashboardPage({
     }
   }, [token, currentView]);
 
+  // ... (toggle fullscreen and handler functions are unchanged) ...
   const toggleMosaicFullscreen = () => {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen();
@@ -116,7 +128,6 @@ export default function DashboardPage({
       }
     }
   };
-
   const toggleGridFullscreen = () => {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen();
@@ -128,20 +139,14 @@ export default function DashboardPage({
       }
     }
   };
-
   const handleCameraAdded = (newCamera: Camera) => {
-    // --- THIS IS THE FIX ---
-    // We update the camera list and stay on the current view
     setCameras((prevCameras) =>
       [...prevCameras, newCamera].sort(
         (a, b) => a.display_order - b.display_order
       )
     );
-    // We no longer switch to "single" view
-    // setViewMode("single");
     toast.success(`"${newCamera.name}" was added successfully!`);
   };
-
   const handleSelectAndGoToSingle = (camera: Camera) => {
     if (document.fullscreenElement) {
       document.exitFullscreen();
@@ -149,11 +154,9 @@ export default function DashboardPage({
     setSelectedCamera(camera);
     setViewMode("single");
   };
-
   const handleSelectForFocus = (camera: Camera) => {
     setSelectedCamera(camera);
   };
-
   const handleDeleteCamera = async (cameraToDelete: Camera) => {
     const originalCameras = [...cameras];
     const originalSelected = selectedCamera;
@@ -196,7 +199,6 @@ export default function DashboardPage({
       toast.error(`Failed to delete ${cameraToDelete.name}`);
     }
   };
-
   const openDeleteModal = (camera: Camera) => {
     setCameraToDelete(camera);
     setIsConfirmOpen(true);
@@ -241,7 +243,8 @@ export default function DashboardPage({
       <CameraGridView
         cameras={cameras}
         onCameraSelect={handleSelectAndGoToSingle}
-        onAddCameraClick={() => setIsAddModalOpen(true)} // <-- Pass the function
+        onAddCameraClick={() => setIsAddModalOpen(true)}
+        gridColumns={gridColumns} // <-- 4. PASS PROPS
       />
     );
   };
@@ -250,6 +253,7 @@ export default function DashboardPage({
     <div className="flex h-screen w-full bg-gray-100 dark:bg-gray-900">
       <div className={`relative flex flex-1 flex-col overflow-hidden`}>
         <header className="flex h-16 flex-shrink-0 items-center justify-between border-b border-gray-200 bg-white px-8 dark:border-gray-700 dark:bg-gray-800">
+          {/* ... (Header logic unchanged) ... */}
           <div className="flex items-center gap-4">
             <Video className="h-8 w-8 text-blue-600 dark:text-blue-500" />
             <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">
@@ -299,7 +303,6 @@ export default function DashboardPage({
                   </button>
                 </>
               )}
-
             {currentView === "dashboard" &&
               viewMode === "single" &&
               cameras.length > 0 && (
@@ -315,7 +318,6 @@ export default function DashboardPage({
                   )}
                 </button>
               )}
-
             {currentView === "settings" && (
               <button
                 onClick={() => setCurrentView("dashboard")}
@@ -326,7 +328,6 @@ export default function DashboardPage({
                 Back
               </button>
             )}
-
             <UserIcon className="h-8 w-8 rounded-full bg-gray-200 p-1 text-gray-600 dark:bg-gray-700 dark:text-gray-300" />
             <HeadlessMenu as="div" className="relative ml-1">
               <HeadlessMenu.Button className="flex rounded-full p-1 text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700">
@@ -422,6 +423,7 @@ export default function DashboardPage({
         <FullscreenGridView
           cameras={cameras}
           onExitFullscreen={toggleGridFullscreen}
+          gridColumns={gridColumns} // <-- 5. PASS PROPS
         />
       )}
 
