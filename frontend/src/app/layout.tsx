@@ -1,13 +1,14 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import { Toaster } from "sonner";
+// import { Toaster } from "sonner"; // <-- No longer needed here
 import { ThemeProvider } from "./components/ThemeProvider";
-import { SettingsProvider } from "./contexts/SettingsContext"; // <-- 1. IMPORT
+import { SettingsProvider } from "./contexts/SettingsContext";
+import { AuthProvider } from "./contexts/AuthContext";
 
 const inter = Inter({ subsets: ["latin"] });
 
-export const metadata: Metadata = {
+export const metadata = {
   title: "CamView",
   description: "Security Camera Viewer",
 };
@@ -22,10 +23,8 @@ export default function RootLayout({
       <body className={inter.className}>
         <main>
           <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-            {/* 2. WRAP APP WITH SETTINGS PROVIDER */}
             <SettingsProvider>
-              {children}
-              <Toaster position="top-right" richColors />
+              <AuthProvider>{children}</AuthProvider>
             </SettingsProvider>
           </ThemeProvider>
         </main>

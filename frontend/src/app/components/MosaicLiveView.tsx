@@ -3,24 +3,26 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Camera } from "@/app/types";
 import { Loader, AlertTriangle, Video } from "lucide-react";
+import { useAuth } from "@/app/contexts/AuthContext"; // <-- 1. IMPORT
 
-// --- Constants ---
-const MEDIAMTX_URL = "http://localhost:8888";
+const MEDIAMTX_URL =
+  process.env.NEXT_PUBLIC_WHEP_URL || "http://localhost:8888";
 
 interface MosaicLiveViewProps {
   camera: Camera | null;
   isMuted?: boolean;
+  // 2. No more token prop
 }
 
 export default function MosaicLiveView({
   camera,
   isMuted = true,
 }: MosaicLiveViewProps) {
+  const { api } = useAuth(); // <-- 3. Get api hook
   const videoRef = useRef<HTMLVideoElement>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const [connectionState, setConnectionState] = useState("idle");
 
-  // --- 1. NEW: State to trigger a reconnect ---
   const [retryAttempt, setRetryAttempt] = useState(0);
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -30,7 +32,6 @@ export default function MosaicLiveView({
       return;
     }
 
-    // Clear any pending retry timeouts
     if (retryTimeoutRef.current) {
       clearTimeout(retryTimeoutRef.current);
       retryTimeoutRef.current = null;
@@ -46,22 +47,19 @@ export default function MosaicLiveView({
         const pc = new RTCPeerConnection();
         peerConnectionRef.current = pc;
 
-        // --- 2. UPDATED: Add auto-reconnect logic ---
         pc.onconnectionstatechange = () => {
           const state = pc.connectionState;
           setConnectionState(state);
 
-          // If it fails or disconnects, schedule a retry
           if (
             state === "failed" ||
             state === "disconnected" ||
             state === "closed"
           ) {
-            // Only retry if we're not already trying
             if (!retryTimeoutRef.current) {
               retryTimeoutRef.current = setTimeout(() => {
-                setRetryAttempt((prev) => prev + 1); // Trigger the useEffect
-              }, 3000); // Wait 3 seconds before retrying
+                setRetryAttempt((prev) => prev + 1);
+              }, 3000);
             }
           }
         };
@@ -76,14 +74,23 @@ export default function MosaicLiveView({
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
 
+        // 4. Fetch credentials securely using 'api' hook
+        const credsResponse = await api("/api/webrtc-creds");
+        if (!credsResponse) return; // Logout already handled
+
+        if (!credsResponse.ok) {
+          throw new Error("Failed to fetch stream credentials");
+        }
+        const creds = await credsResponse.json();
+        const credentials = btoa(`${creds.user}:${creds.pass}`);
+
         const whepEndpoint = `${MEDIAMTX_URL}/${camera.path}/whep`;
-        const credentials = btoa("viewer:secret");
 
         const response = await fetch(whepEndpoint, {
           method: "POST",
           headers: {
             "Content-Type": "application/sdp",
-            Authorization: `Basic ${credentials}`,
+            Authorization: `Basic ${credentials}`, // 5. Now uses secure creds
           },
           body: pc.localDescription?.sdp,
         });
@@ -108,7 +115,6 @@ export default function MosaicLiveView({
     connect();
 
     return () => {
-      // Clear timeouts and close connections on unmount
       if (retryTimeoutRef.current) {
         clearTimeout(retryTimeoutRef.current);
       }
@@ -116,26 +122,22 @@ export default function MosaicLiveView({
         peerConnectionRef.current.close();
       }
     };
-  }, [camera, retryAttempt]); // <-- 3. Add retryAttempt to dependency array
+  }, [camera, retryAttempt, api]); // 6. Add 'api' to dependency array
 
   const ConnectionStatus = () => {
     let icon, text;
     switch (connectionState) {
       case "connecting":
       case "new":
-        // No spinner, just a black box
         return null;
-
       case "connected":
         return null;
-
       case "failed":
       case "disconnected":
       case "closed":
         icon = <AlertTriangle className="h-12 w-12 text-red-400" />;
         text = "Connection Failed";
         break;
-
       default:
         icon = <Video className="h-12 w-12 text-gray-400" />;
         text = "Select a camera to view";
@@ -150,7 +152,6 @@ export default function MosaicLiveView({
   };
 
   return (
-    // This div fills its parent
     <div className="relative w-full h-full rounded-lg bg-black shadow-lg group">
       <video
         ref={videoRef}

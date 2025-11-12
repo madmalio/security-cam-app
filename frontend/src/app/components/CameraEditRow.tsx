@@ -16,21 +16,19 @@ import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import TestStreamModal from "./TestStreamModal";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-
-// --- Constants ---
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+import { useAuth } from "@/app/contexts/AuthContext"; // <-- 1. IMPORT
 
 interface CameraEditRowProps {
   camera: Camera;
-  token: string;
   onUpdate: () => void;
+  // 2. No more token prop
 }
 
 export default function CameraEditRow({
   camera,
-  token,
   onUpdate,
 }: CameraEditRowProps) {
+  const { api } = useAuth(); // <-- 3. Get api from context
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -57,18 +55,15 @@ export default function CameraEditRow({
     zIndex: isDragging ? 10 : "auto",
   };
 
+  // 4. Update to use 'api' hook
   const handleTestConnection = async () => {
-    // This function now only runs from the "view" mode
     setIsTesting(true);
     try {
-      const response = await fetch(`${API_URL}/api/cameras/test-connection`, {
+      const response = await api("/api/cameras/test-connection", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ rtsp_url: camera.rtsp_url }), // <-- Always use the saved URL
+        body: JSON.stringify({ rtsp_url: camera.rtsp_url }),
       });
+      if (!response) return;
 
       if (!response.ok) {
         const err = await response.json();
@@ -85,17 +80,15 @@ export default function CameraEditRow({
     }
   };
 
+  // 5. Update to use 'api' hook
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      const response = await fetch(`${API_URL}/api/cameras/${camera.id}`, {
+      const response = await api(`/api/cameras/${camera.id}`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
         body: JSON.stringify({ name: name, rtsp_url: rtspUrl }),
       });
+      if (!response) return;
 
       if (!response.ok) {
         const err = await response.json();
@@ -103,7 +96,7 @@ export default function CameraEditRow({
       }
 
       toast.success(`Updated "${name}" successfully!`);
-      onUpdate(); // This re-fetches the camera list
+      onUpdate();
       setIsEditing(false);
     } catch (err: any) {
       toast.error(err.message);
@@ -112,15 +105,14 @@ export default function CameraEditRow({
     }
   };
 
+  // 6. Update to use 'api' hook
   const handleDelete = async () => {
     setIsDeleting(true);
     try {
-      const response = await fetch(`${API_URL}/api/cameras/${camera.id}`, {
+      const response = await api(`/api/cameras/${camera.id}`, {
         method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
       });
+      if (!response) return;
 
       if (!response.ok) {
         const err = await response.json();
@@ -128,7 +120,7 @@ export default function CameraEditRow({
       }
 
       toast.success(`Deleted "${camera.name}"`);
-      onUpdate(); // Re-fetches the camera list
+      onUpdate();
       setIsConfirmOpen(false);
     } catch (err: any) {
       toast.error(err.message);
@@ -138,7 +130,6 @@ export default function CameraEditRow({
   };
 
   const handleCancel = () => {
-    // Reset fields to original state
     setName(camera.name);
     setRtspUrl(camera.rtsp_url);
     setIsEditing(false);
@@ -150,16 +141,16 @@ export default function CameraEditRow({
         <div
           ref={setNodeRef}
           style={style}
-          className="rounded-lg border border-blue-500 bg-white p-4 shadow-sm dark:border-blue-700 dark:bg-gray-800"
+          className="rounded-lg border border-blue-500 bg-white p-4 shadow-sm dark:border-blue-700 dark:bg-zinc-800"
         >
           <div className="flex items-center mb-4">
             <button
-              className="cursor-not-allowed p-2 text-gray-300 dark:text-gray-600"
+              className="cursor-not-allowed p-2 text-gray-300 dark:text-zinc-600"
               disabled={true}
             >
               <GripVertical className="h-5 w-5" />
             </button>
-            <p className="ml-2 text-sm text-gray-500">
+            <p className="ml-2 text-sm text-gray-500 dark:text-zinc-500">
               Save changes to enable reordering
             </p>
           </div>
@@ -167,7 +158,7 @@ export default function CameraEditRow({
             <div>
               <label
                 htmlFor={`name-${camera.id}`}
-                className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300"
               >
                 Camera Name
               </label>
@@ -176,13 +167,13 @@ export default function CameraEditRow({
                 id={`name-${camera.id}`}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full rounded-md border border-gray-300 p-2 focus:border-blue-500 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                className="w-full rounded-md border border-gray-300 p-2 text-gray-900 focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
               />
             </div>
             <div>
               <label
                 htmlFor={`url-${camera.id}`}
-                className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300"
               >
                 RTSP URL
               </label>
@@ -191,14 +182,14 @@ export default function CameraEditRow({
                 id={`url-${camera.id}`}
                 value={rtspUrl}
                 onChange={(e) => setRtspUrl(e.target.value)}
-                className="w-full rounded-md border border-gray-300 p-2 focus:border-blue-500 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                className="w-full rounded-md border border-gray-300 p-2 text-gray-900 focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
               />
             </div>
           </div>
           <div className="mt-4 flex justify-end gap-3">
             <button
               onClick={handleCancel}
-              className="flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+              className="flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-600"
             >
               <X className="mr-2 h-4 w-4" />
               Cancel
@@ -229,19 +220,18 @@ export default function CameraEditRow({
   }
 
   return (
-    // This is the "View" mode
     <>
       <div
         ref={setNodeRef}
         style={style}
-        className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800"
+        className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-800"
       >
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center">
             <button
               {...attributes}
               {...listeners}
-              className="cursor-grab p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700 rounded-md"
+              className="cursor-grab p-2 text-gray-500 hover:bg-gray-100 dark:text-zinc-400 dark:hover:bg-zinc-700 rounded-md"
               title="Drag to reorder"
             >
               <GripVertical className="h-5 w-5" />
@@ -250,14 +240,12 @@ export default function CameraEditRow({
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                 {camera.name}
               </h3>
-              <p className="mt-1 truncate text-sm text-gray-500 dark:text-gray-400">
+              <p className="mt-1 truncate text-sm text-gray-500 dark:text-zinc-400">
                 {camera.rtsp_url}
               </p>
             </div>
           </div>
-          {/* --- THIS IS THE FIX --- */}
           <div className="mt-4 flex gap-3 sm:mt-0">
-            {/* 1. "Test" button is now green and first */}
             <button
               onClick={handleTestConnection}
               disabled={isTesting}
@@ -274,15 +262,14 @@ export default function CameraEditRow({
             </button>
             <button
               onClick={() => setIsEditing(true)}
-              className="flex items-center justify-center rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+              className="flex items-center justify-center rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 dark:bg-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-600"
             >
               <Edit className="mr-2 h-4 w-4" />
               Edit
             </button>
-            {/* 2. "Delete" button is now last */}
             <button
               onClick={() => setIsConfirmOpen(true)}
-              className="flex items-center justify-center rounded-lg p-2 text-gray-500 hover:bg-red-100 hover:text-red-600 dark:text-gray-400 dark:hover:bg-red-900/50 dark:hover:text-red-400"
+              className="flex items-center justify-center rounded-lg p-2 text-gray-500 hover:bg-red-100 hover:text-red-600 dark:text-zinc-400 dark:hover:bg-red-900/50 dark:hover:text-red-400"
               title="Delete Camera"
             >
               <Trash2 className="h-5 w-5" />

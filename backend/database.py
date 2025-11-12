@@ -3,17 +3,28 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from pydantic_settings import BaseSettings
 
-# This class reads environment variables from the .env file
+# --- This class now reads the secret from a file ---
 class Settings(BaseSettings):
     DATABASE_URL: str
+    
     class Config:
-        env_file = ".env"
+        # Pydantic-settings can read from secret files
+        secrets_dir = "/run/secrets"
 
-settings = Settings()
+# --- Create a helper function to read the secret ---
+def get_db_url():
+    try:
+        with open("/run/secrets/db_url_secret", "r") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        print("!!! ERROR: 'db_url_secret' file not found. Using fallback for local dev.")
+        # Fallback for running python main.py directly (not in Docker)
+        return "postgresql://admin:supersecret@localhost/cameradb"
+
+DATABASE_URL = get_db_url()
 
 # Create the SQLAlchemy engine
-# 'DATABASE_URL' is pulled from your .env file
-engine = create_engine(settings.DATABASE_URL)
+engine = create_engine(DATABASE_URL)
 
 # Each instance of SessionLocal will be a new database session
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

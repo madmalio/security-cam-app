@@ -33,10 +33,11 @@ class UserSession(Base):
     __tablename__ = "user_sessions"
     
     id = Column(Integer, primary_key=True, index=True)
-    jti = Column(String, unique=True, index=True) # JWT ID
+    jti = Column(String, unique=True, index=True) # Refresh token's JWT ID
     user_id = Column(Integer, ForeignKey("users.id"))
     user_agent = Column(String, nullable=True)
     ip_address = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False) # <-- ADDED THIS
     
     user = relationship("User", back_populates="sessions")

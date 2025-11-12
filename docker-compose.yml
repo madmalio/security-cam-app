@@ -7,11 +7,18 @@ services:
       - "3001:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8080
+      - NEXT_PUBLIC_WHEP_URL=http://localhost:8888
     depends_on:
       - backend
     networks:
       - cam_net
     restart: unless-stopped
+    user: "appuser" # <-- 1. Run as the non-root user
+    read_only: true # <-- 2. Make filesystem read-only
+    tmpfs: # <-- 3. Mount a temporary filesystem for Next.js to write to
+      - /tmp
+    security_opt: # <-- 4. Prevent privilege escalation
+      - no-new-privileges:true
 
   # 2. Backend (FastAPI)
   backend:
@@ -19,12 +26,11 @@ services:
       context: ./backend
     ports:
       - "8080:8080"
-    env_file:
-      - ./backend/.env
-    # --- ADD THIS SECTION ---
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # ------------------------
+    secrets:
+      - db_url_secret
+      - jwt_secret_key
     depends_on:
       db:
         condition: service_healthy
@@ -33,6 +39,9 @@ services:
     networks:
       - cam_net
     restart: always
+    user: "appuser" # <-- 1. Run as the non-root user
+    security_opt: # <-- 4. Prevent privilege escalation
+      - no-new-privileges:true
 
   # 3. Database (PostgreSQL)
   db:
@@ -40,17 +49,21 @@ services:
     restart: always
     environment:
       - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=supersecret
       - POSTGRES_DB=cameradb
+      - POSTGRES_PASSWORD_FILE=/run/secrets/db_password
     volumes:
       - db_data:/var/lib/postgresql/data
     networks:
       - cam_net
+    secrets:
+      - db_password
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U admin -d cameradb"]
       interval: 5s
       timeout: 5s
       retries: 5
+    security_opt: # <-- 4. Prevent privilege escalation
+      - no-new-privileges:true
 
   # 4. Media Server (mediamtx)
   mediamtx:
@@ -61,12 +74,13 @@ services:
       - "8554:8554" # RTSP
       - "1935:1935" # RTMP
       - "8189:8189/udp"
-      - "9997:9997" # API
       - "8887:8887" # HLS
     volumes:
       - ./mediamtx.yml:/mediamtx.yml
     networks:
       - cam_net
+    security_opt: # <-- 4. Prevent privilege escalation
+      - no-new-privileges:true
 
 networks:
   cam_net:
@@ -74,3 +88,11 @@ networks:
 
 volumes:
   db_data:
+
+secrets:
+  db_password:
+    file: ./db_password.txt
+  jwt_secret_key:
+    file: ./secret_key.txt
+  db_url_secret:
+    file: ./db_url.txt

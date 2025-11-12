@@ -4,28 +4,27 @@ import React from "react";
 import { Camera } from "@/app/types";
 import LiveCameraView from "./LiveCameraView";
 import AddCameraBox from "./AddCameraBox";
-import { GridColumns } from "@/app/contexts/SettingsContext"; // <-- 1. IMPORT
+import { GridColumns } from "@/app/contexts/SettingsContext";
 
 interface CameraGridViewProps {
   cameras: Camera[];
   onCameraSelect: (camera: Camera) => void;
   onAddCameraClick: () => void;
-  gridColumns: GridColumns; // <-- 2. ADD PROP
+  gridColumns: GridColumns;
+  // No more token prop
 }
 
 export default function CameraGridView({
   cameras,
   onCameraSelect,
   onAddCameraClick,
-  gridColumns, // <-- 3. RECEIVE PROP
+  gridColumns,
 }: CameraGridViewProps) {
-  // --- 4. DYNAMIC GRID CLASSES ---
   const gridClassMap = {
     3: "lg:grid-cols-3",
     4: "lg:grid-cols-4",
     5: "lg:grid-cols-5",
   };
-  // Fallback to 4 if something is wrong
   const gridLayout = gridClassMap[gridColumns] || "lg:grid-cols-4";
 
   return (

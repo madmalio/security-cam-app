@@ -9,6 +9,7 @@ interface FocusViewProps {
   selectedCamera: Camera;
   onSelectCamera: (camera: Camera) => void;
   onFocusClick: (camera: Camera) => void;
+  // No more token prop
 }
 
 export default function FocusView({
@@ -20,9 +21,6 @@ export default function FocusView({
   const otherCameras = cameras.filter((c) => c.id !== selectedCamera.id);
 
   return (
-    // --- THIS IS THE FIX ---
-    // Switched from Flexbox to a 4-column CSS Grid.
-    // The main view takes 3 columns, the side list takes 1.
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 h-full">
       {/* Main Focus View (takes 3/4 width) */}
       <div className="lg:col-span-3 min-w-0">
@@ -40,7 +38,6 @@ export default function FocusView({
 
       {/* Sidebar Camera List (takes 1/4 width) */}
       <div className="w-full flex-shrink-0 flex flex-col min-h-0">
-        {/* This div scrolls if the content overflows */}
         <div className="flex flex-col gap-2 overflow-y-auto">
           {otherCameras.map((cam) => (
             <div

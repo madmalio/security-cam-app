@@ -17,25 +17,20 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { toast } from "sonner";
-
-// --- Constants ---
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+import { useAuth } from "@/app/contexts/AuthContext"; // <-- 1. IMPORT
 
 interface CameraSettingsProps {
-  token: string;
   cameras: Camera[];
   onCamerasUpdate: () => void;
 }
 
 export default function CameraSettings({
-  token,
   cameras: initialCameras,
   onCamerasUpdate,
 }: CameraSettingsProps) {
-  // --- 1. NEW: State to manage camera order locally ---
+  const { api } = useAuth(); // <-- 2. Get api from context
   const [cameras, setCameras] = useState<Camera[]>(initialCameras);
 
-  // Update local state if the prop changes (e.g., after a delete)
   useEffect(() => {
     setCameras(initialCameras);
   }, [initialCameras]);
@@ -43,43 +38,37 @@ export default function CameraSettings({
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 8, // Require 8px drag to start
+        distance: 8,
       },
     })
   );
 
-  // --- 2. NEW: Handler for when dragging ends ---
   async function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (over && active.id !== over.id) {
-      // 1. Update UI instantly
       const oldIndex = cameras.findIndex((c) => c.id === active.id);
       const newIndex = cameras.findIndex((c) => c.id === over.id);
       const newOrderedCameras = arrayMove(cameras, oldIndex, newIndex);
       setCameras(newOrderedCameras);
 
-      // 2. Get just the IDs in the new order
       const newCameraIds = newOrderedCameras.map((c) => c.id);
 
-      // 3. Send to API
       try {
-        const response = await fetch(`${API_URL}/api/cameras/reorder`, {
+        const response = await api("/api/cameras/reorder", {
+          // <-- 3. Use api
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
           body: JSON.stringify({ camera_ids: newCameraIds }),
         });
+        if (!response) return;
 
         if (!response.ok) {
           throw new Error("Failed to save new order");
         }
         toast.success("Camera order saved!");
-        onCamerasUpdate(); // Re-fetch from server to confirm
+        onCamerasUpdate();
       } catch (err: any) {
         toast.error(err.message);
-        setCameras(initialCameras); // Revert on failure
+        setCameras(initialCameras);
       }
     }
   }
@@ -90,13 +79,12 @@ export default function CameraSettings({
         <h1 className="text-3xl font-semibold text-gray-900 dark:text-white">
           Camera Settings
         </h1>
-        <p className="mt-1 text-gray-500 dark:text-gray-400">
+        <p className="mt-1 text-gray-500 dark:text-zinc-400">
           Drag and drop cameras to reorder them. This order will be reflected on
           your dashboard.
         </p>
       </div>
 
-      {/* --- 3. NEW: DND Context Wrapper --- */}
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -108,7 +96,7 @@ export default function CameraSettings({
         >
           <div className="flex flex-col gap-4">
             {cameras.length === 0 ? (
-              <p className="text-gray-500 dark:text-gray-400">
+              <p className="text-gray-500 dark:text-zinc-400">
                 You have not added any cameras yet.
               </p>
             ) : (
@@ -116,8 +104,8 @@ export default function CameraSettings({
                 <CameraEditRow
                   key={camera.id}
                   camera={camera}
-                  token={token}
                   onUpdate={onCamerasUpdate}
+                  // 4. No more token prop
                 />
               ))
             )}

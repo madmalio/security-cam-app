@@ -5,11 +5,13 @@ import { Dialog, Transition } from "@headlessui/react";
 import { X } from "lucide-react";
 import LiveCameraView from "./LiveCameraView";
 import { Camera } from "@/app/types";
+// No useAuth needed here
 
 interface TestStreamModalProps {
   isOpen: boolean;
   onClose: () => void;
   testStreamPath: string | null;
+  // No token prop
 }
 
 export default function TestStreamModal({
@@ -18,21 +20,22 @@ export default function TestStreamModal({
   testStreamPath,
 }: TestStreamModalProps) {
   const [testCamera, setTestCamera] = useState<Camera | null>(null);
+  // Removed testToken state
 
   useEffect(() => {
+    // This effect now *only* sets up the temporary camera object
     if (isOpen && testStreamPath) {
-      // Create a temporary "Camera" object for the LiveCameraView component
       setTestCamera({
-        id: 9999, // Fake ID
+        id: 9999,
         name: "Test Stream",
         path: testStreamPath,
-        rtsp_url: "", // Not needed by the player
-        display_order: 0, // <-- THIS IS THE FIX
+        rtsp_url: "",
+        display_order: 0,
       });
     } else {
-      setTestCamera(null); // Clear camera when modal closes
+      setTestCamera(null);
     }
-  }, [isOpen, testStreamPath]);
+  }, [isOpen, testStreamPath]); // Removed api and testToken dependencies
 
   return (
     <Transition appear show={isOpen} as={Fragment}>
@@ -60,7 +63,7 @@ export default function TestStreamModal({
               leaveFrom="opacity-100 scale-100"
               leaveTo="opacity-0 scale-95"
             >
-              <Dialog.Panel className="w-full max-w-2xl transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all dark:bg-gray-800">
+              <Dialog.Panel className="w-full max-w-2xl transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all dark:bg-zinc-800">
                 <Dialog.Title
                   as="h3"
                   className="flex justify-between items-center text-lg font-medium leading-6 text-gray-900 dark:text-white"
@@ -68,21 +71,25 @@ export default function TestStreamModal({
                   Testing Connection...
                   <button
                     onClick={onClose}
-                    className="rounded-full p-1 text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+                    className="rounded-full p-1 text-gray-600 hover:bg-gray-100 dark:text-zinc-300 dark:hover:bg-zinc-700"
                   >
                     <X className="h-5 w-5" />
                   </button>
                 </Dialog.Title>
                 <div className="mt-4">
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                  <p className="text-sm text-gray-500 dark:text-zinc-400 mb-4">
                     The video player below will attempt to connect to your
                     stream. If you see a "Connection Failed" error, please check
                     your RTSP URL and credentials.
                   </p>
 
-                  {/* Render the player only when the camera object is set */}
+                  {/* Render only when camera is set. No token is needed. */}
                   {testCamera && (
-                    <LiveCameraView camera={testCamera} isMuted={false} />
+                    <LiveCameraView
+                      camera={testCamera}
+                      isMuted={false}
+                      // token={testToken} <-- FIX: REMOVED THIS LINE
+                    />
                   )}
                 </div>
               </Dialog.Panel>

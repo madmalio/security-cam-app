@@ -19,19 +19,19 @@ WORKDIR /app
 # Set environment to production
 ENV NODE_ENV=production
 
-# Copy built app from the 'builder' stage
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/package.json ./package.json
+# --- 1. Create a non-root user ---
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
-# --- ADD THESE TWO LINES ---
-# Copy the lock file and the installed dependencies
-COPY --from=builder /app/package-lock.json ./package-lock.json
-COPY --from=builder /app/node_modules ./node_modules
+# --- 2. Copy files and set owner at the same time ---
+COPY --from=builder --chown=appuser:appgroup /app/.next ./.next
+COPY --from=builder --chown=appuser:appgroup /app/public ./public
+COPY --from=builder --chown=appuser:appgroup /app/package.json ./package.json
+COPY --from=builder --chown=appuser:appgroup /app/package-lock.json ./package-lock.json
+COPY --from=builder --chown=appuser:appgroup /app/node_modules ./node_modules
+COPY --from=builder --chown=appuser:appgroup /app/next.config.ts ./next.config.ts
 
-# This file is optional, but we'll keep the line
-# If it fails, you can safely remove it
-COPY --from=builder /app/next.config.ts ./next.config.ts
+# --- 4. Switch to the non-root user ---
+USER appuser
 
 # Expose the port Next.js runs on
 EXPOSE 3000

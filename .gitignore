@@ -2,6 +2,9 @@
 # This is the most important line!
 # It ignores your database and API secret keys.
 backend/.env
+db_password.txt
+secret_key.txt
+db_url.txt
 
 # --- Node.js / Next.js ---
 # Ignore the massive folder of downloaded packages

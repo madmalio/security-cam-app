@@ -5,21 +5,19 @@ import { Camera } from "@/app/types";
 import { Loader, Wifi } from "lucide-react";
 import { toast } from "sonner";
 import TestStreamModal from "./TestStreamModal";
-
-// --- Constants ---
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+import { useAuth } from "@/app/contexts/AuthContext"; // <-- 1. IMPORT
 
 interface AddCameraModalProps {
-  token: string;
   onClose: () => void;
   onCameraAdded: (newCamera: Camera) => void;
+  // 2. No more token prop
 }
 
 export default function AddCameraModal({
-  token,
   onClose,
   onCameraAdded,
 }: AddCameraModalProps) {
+  const { api } = useAuth(); // <-- 3. Get api from context
   const [name, setName] = useState("");
   const [rtspUrl, setRtspUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -29,6 +27,7 @@ export default function AddCameraModal({
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
   const [testStreamPath, setTestStreamPath] = useState<string | null>(null);
 
+  // 4. Update to use 'api' hook
   const handleTestConnection = async () => {
     if (!rtspUrl) {
       toast.error("Please enter an RTSP URL to test.");
@@ -36,14 +35,11 @@ export default function AddCameraModal({
     }
     setIsTesting(true);
     try {
-      const response = await fetch(`${API_URL}/api/cameras/test-connection`, {
+      const response = await api("/api/cameras/test-connection", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
         body: JSON.stringify({ rtsp_url: rtspUrl }),
       });
+      if (!response) return;
 
       if (!response.ok) {
         const err = await response.json();
@@ -60,23 +56,21 @@ export default function AddCameraModal({
     }
   };
 
+  // 5. Update to use 'api' hook
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError(null);
 
     try {
-      const response = await fetch(`${API_URL}/api/cameras`, {
+      const response = await api("/api/cameras", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
         body: JSON.stringify({
           name: name,
           rtsp_url: rtspUrl,
         }),
       });
+      if (!response) return;
 
       if (!response.ok) {
         const errData = await response.json();
@@ -97,7 +91,7 @@ export default function AddCameraModal({
   return (
     <>
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-        <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-lg dark:bg-gray-800">
+        <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-lg dark:bg-zinc-800">
           <h3 className="mb-4 text-xl font-semibold text-gray-900 dark:text-white">
             Add New Camera
           </h3>
@@ -110,7 +104,7 @@ export default function AddCameraModal({
             <div className="mb-4">
               <label
                 htmlFor="cam-name"
-                className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                className="mb-2 block text-sm font-medium text-gray-700 dark:text-zinc-300"
               >
                 Camera Name
               </label>
@@ -121,13 +115,13 @@ export default function AddCameraModal({
                 onChange={(e) => setName(e.target.value)}
                 required
                 placeholder="e.g., Front Door"
-                className="w-full rounded-md border border-gray-300 p-2.5 focus:border-blue-500 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                className="w-full rounded-md border border-gray-300 p-2.5 text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white dark:placeholder:text-zinc-500"
               />
             </div>
             <div className="mb-6">
               <label
                 htmlFor="cam-url"
-                className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                className="mb-2 block text-sm font-medium text-gray-700 dark:text-zinc-300"
               >
                 RTSP Stream URL
               </label>
@@ -138,12 +132,10 @@ export default function AddCameraModal({
                 onChange={(e) => setRtspUrl(e.target.value)}
                 required
                 placeholder="rtsp://user:pass@192.168.1.100/stream"
-                className="w-full rounded-md border border-gray-300 p-2.5 focus:border-blue-500 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                className="w-full rounded-md border border-gray-300 p-2.5 text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white dark:placeholder:text-zinc-500"
               />
             </div>
 
-            {/* --- THIS IS THE FIX --- */}
-            {/* Changed from justify-between to justify-end */}
             <div className="flex justify-end space-x-3">
               <button
                 type="button"
@@ -163,7 +155,7 @@ export default function AddCameraModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-900 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600"
+                className="rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-900 hover:bg-gray-100 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white dark:hover:bg-zinc-600"
               >
                 Cancel
               </button>

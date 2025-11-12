@@ -9,6 +9,7 @@ import { Pause, Play, X, ArrowLeft } from "lucide-react";
 interface MosaicViewProps {
   cameras: Camera[];
   onExitFullscreen: () => void;
+  // No more token prop
 }
 
 const CYCLE_TIME_MS = 15000; // 15 seconds
@@ -25,7 +26,6 @@ export default function MosaicView({
   );
   const [isCycling, setIsCycling] = useState(true);
 
-  // This effect handles the auto-cycling
   useEffect(() => {
     if (mosaicMode !== "grid" || !isCycling || cameras.length < 2) return;
 
@@ -40,7 +40,6 @@ export default function MosaicView({
     return () => clearInterval(intervalId);
   }, [mosaicMode, isCycling, cameras]);
 
-  // This effect updates the "other" cameras when the main camera changes
   useEffect(() => {
     setOtherCameras(cameras.filter((c) => c.id !== mainCamera.id).slice(0, 5));
   }, [mainCamera, cameras]);
@@ -90,8 +89,6 @@ export default function MosaicView({
   };
 
   return (
-    // --- THIS IS THE FIX ---
-    // Changed bg-gray-900 to bg-black
     <div className="fixed inset-0 z-50 bg-black p-4 flex items-center justify-center">
       {mosaicMode === "focus" && focusedCamera ? (
         // --- SINGLE FOCUS VIEW ---

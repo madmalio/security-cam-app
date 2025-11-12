@@ -3,20 +3,21 @@
 import React, { useState } from "react";
 import { Camera } from "@/app/types";
 import LiveCameraView from "./LiveCameraView";
-import FullscreenLiveView from "./FullscreenLiveView";
+import MosaicLiveView from "./MosaicLiveView";
 import { X, ArrowLeft } from "lucide-react";
-import { GridColumns } from "@/app/contexts/SettingsContext"; // <-- 1. IMPORT
+import { GridColumns } from "@/app/contexts/SettingsContext";
 
 interface FullscreenGridViewProps {
   cameras: Camera[];
   onExitFullscreen: () => void;
-  gridColumns: GridColumns; // <-- 2. ADD PROP
+  gridColumns: GridColumns;
+  // No more token prop
 }
 
 export default function FullscreenGridView({
   cameras,
   onExitFullscreen,
-  gridColumns, // <-- 3. RECEIVE PROP
+  gridColumns,
 }: FullscreenGridViewProps) {
   const [mode, setMode] = useState<"grid" | "focus">("grid");
   const [focusedCamera, setFocusedCamera] = useState<Camera | null>(null);
@@ -59,7 +60,6 @@ export default function FullscreenGridView({
     );
   };
 
-  // --- 4. DYNAMIC GRID CLASSES ---
   const gridClassMap = {
     3: "lg:grid-cols-3",
     4: "lg:grid-cols-4",
@@ -72,7 +72,7 @@ export default function FullscreenGridView({
       {mode === "focus" && focusedCamera ? (
         // --- SINGLE FOCUS VIEW ---
         <div className="w-full max-w-full max-h-full aspect-video relative group">
-          <FullscreenLiveView camera={focusedCamera} isMuted={false} />
+          <MosaicLiveView camera={focusedCamera} isMuted={false} />
           <button
             onClick={handleGoBackToGrid}
             className="absolute top-2 left-2 z-20 flex items-center gap-2 rounded-full p-2 text-white/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-white/10 hover:text-white"

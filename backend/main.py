@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks, Request # <-- 1. IMPORT Request
+from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session, joinedload
@@ -10,7 +10,7 @@ import logging
 import asyncio
 import hashlib
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 # Import our own modules
 import models
@@ -32,16 +32,22 @@ app = FastAPI()
 # ====================================================================
 #                 CORS Middleware & Pydantic Schemas
 # ====================================================================
-# ... (Unchanged) ...
+
+origins = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    # "https://your-production-domain.com",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
-# --- Schemas (Updated) ---
+# --- Schemas ---
 class CameraBase(BaseModel): name: str
 class CameraCreate(BaseModel): name: str; rtsp_url: str
 class Camera(CameraBase):
@@ -54,6 +60,7 @@ class TestCameraRequest(BaseModel):
     rtsp_url: str
 class ReorderRequest(BaseModel):
     camera_ids: List[int]
+    
 class UserBase(BaseModel):
     email: str
     display_name: Optional[str] = None
@@ -65,7 +72,6 @@ class UserCreate(UserBase):
             raise ValueError('Password is too long (max 72 bytes)')
         return v
         
-# --- 2. NEW: Session Schema ---
 class UserSession(BaseModel):
     id: int
     jti: str
@@ -76,12 +82,19 @@ class UserSession(BaseModel):
         
 class User(UserBase):
     id: int; cameras: List[Camera] = []; gravatar_hash: Optional[str] = None
-    # We don't include sessions here by default to keep the /me payload light
     class Config: from_attributes = True 
+
 class UserUpdate(BaseModel):
     display_name: Optional[str] = None
-class Token(BaseModel): access_token: str; token_type: str
-class TokenData(BaseModel): email: str | None = None
+
+class Token(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    email: str | None = None
+    
 class PasswordChange(BaseModel):
     current_password: str
     new_password: str = Field(..., min_length=8)
@@ -90,10 +103,10 @@ class PasswordChange(BaseModel):
         if len(v.encode('utf-8')) > 72:
             raise ValueError('Password is too long (max 72 bytes)')
         return v
+        
 # ====================================================================
 #                     Startup Event
 # ====================================================================
-# ... (Unchanged) ...
 @app.on_event("startup")
 async def on_startup():
     log.info("--- STARTUP: Re-populating mediamtx ---")
@@ -126,24 +139,42 @@ async def on_startup():
             except httpx.RequestError as e: log.error(f"--- STARTUP: Could not contact mediamtx: {e} ---")
     db.close()
     log.info("--- STARTUP: mediamtx re-population complete. ---")
+
 # ====================================================================
 #                 Security & Auth
 # ====================================================================
-# ... (Unchanged) ...
-SECRET_KEY = "oVlxx1WjIyVNfsr2WWROPcsVyBhW5L7u" 
+
+# --- Helper function to read the JWT secret key ---
+def get_secret_key():
+    try:
+        with open("/run/secrets/jwt_secret_key", "r") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        print("!!! ERROR: 'jwt_secret_key' file not found. Using fallback for local dev.")
+        # Fallback for running python main.py directly (not in Docker)
+        return "oVlxx1WjIyVNfsr2WWROPcsVyBhW5L7u"
+
+SECRET_KEY = get_secret_key() # <-- UPDATED
 ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 15
+REFRESH_TOKEN_EXPIRE_DAYS = 30
+
 pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
+
 def verify_password(plain_password, hashed_password): return pwd_context.verify(plain_password, hashed_password)
 def get_password_hash(password): return pwd_context.hash(password)
-def create_access_token(data: dict):
+
+def create_access_token(data: dict, expires_delta: timedelta):
     to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + expires_delta
+    to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
 # ====================================================================
 #                 DB Functions
 # ====================================================================
-# ... (Unchanged) ...
 def get_user_by_email(db: Session, email: str):
     return db.query(models.User).options(joinedload(models.User.cameras)).filter(models.User.email == email).first()
 def get_gravatar_hash(email: str) -> str:
@@ -164,10 +195,11 @@ def create_user_db(db: Session, user: UserCreate):
     return get_user_by_email(db, user.email)
 def get_cameras_by_user(db: Session, user_id: int):
     return db.query(models.Camera).filter(models.Camera.owner_id == user_id).order_by(models.Camera.display_order).all()
+
 # ====================================================================
 #                 Auth Dependency (UPDATED)
 # ====================================================================
-async def get_token_data(token: str | None = Depends(oauth2_scheme)) -> TokenData:
+async def get_current_user_from_token(token: str | None = Depends(oauth2_scheme)) -> models.User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -185,9 +217,8 @@ async def get_token_data(token: str | None = Depends(oauth2_scheme)) -> TokenDat
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
         iat_timestamp: int = payload.get("iat") 
-        jti: str = payload.get("jti") # <-- 3. GET JWT ID
         
-        if email is None or iat_timestamp is None or jti is None:
+        if email is None or iat_timestamp is None:
             raise credentials_exception
             
         token_iat = datetime.fromtimestamp(iat_timestamp, tz=timezone.utc)
@@ -196,20 +227,16 @@ async def get_token_data(token: str | None = Depends(oauth2_scheme)) -> TokenDat
         if user is None:
             raise credentials_exception
         
-        # 4. CHECK 1: Check against the "kill-switch" date
         if user.tokens_valid_from and token_iat < user.tokens_valid_from.replace(tzinfo=timezone.utc):
             raise revoked_exception
-        
-        # 5. CHECK 2: Check if this specific token is still in the DB
-        session = db.query(models.UserSession).filter(models.UserSession.jti == jti).first()
-        if not session:
-            raise revoked_exception
             
-        return TokenData(email=email)
-    except JWTError:
+        return user
+    except JWTError as e:
+        credentials_exception.detail = f"Could not validate credentials: {e}"
         raise credentials_exception
     finally:
         db.close()
+
 # ====================================================================
 #                 API Endpoints
 # ====================================================================
@@ -224,7 +251,7 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
 
 @app.post("/token", response_model=Token)
 async def login_for_access_token(
-    request: Request, # <-- 6. ADD Request
+    request: Request, 
     form_data: OAuth2PasswordRequestForm = Depends(), 
 ):
     db = SessionLocal()
@@ -233,62 +260,134 @@ async def login_for_access_token(
         if not user or not verify_password(form_data.password, user.hashed_password):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password", headers={"WWW-Authenticate": "Bearer"},)
         
-        # 7. Create a unique token ID
-        jti = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
         
+        # Create Access Token (short-lived)
+        access_jti = str(uuid.uuid4())
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token_data = {
             "sub": user.email,
-            "iat": datetime.now(timezone.utc),
-            "jti": jti, # <-- 8. Add jti to token
+            "iat": now,
+            "jti": access_jti,
+            "type": "access"
         }
-        access_token = create_access_token(access_token_data)
+        access_token = create_access_token(access_token_data, expires_delta=access_token_expires)
         
-        # 9. Log the new session in the database
+        # Create Refresh Token (long-lived)
+        refresh_jti = str(uuid.uuid4())
+        refresh_token_expires = timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+        refresh_token_expires_at = now + refresh_token_expires
+        refresh_token_data = {
+            "sub": user.email,
+            "iat": now,
+            "jti": refresh_jti,
+            "type": "refresh"
+        }
+        refresh_token = create_access_token(refresh_token_data, expires_delta=refresh_token_expires)
+        
+        # Log the NEW REFRESH TOKEN in the database
         new_session = models.UserSession(
-            jti=jti,
+            jti=refresh_jti,
             user_id=user.id,
             user_agent=request.headers.get("User-Agent"),
-            ip_address=request.client.host
+            ip_address=request.client.host,
+            expires_at=refresh_token_expires_at
         )
         db.add(new_session)
         db.commit()
         
-        return {"access_token": access_token, "token_type": "bearer"}
+        return {
+            "access_token": access_token, 
+            "refresh_token": refresh_token,
+            "token_type": "bearer"
+        }
     finally: db.close()
+
+@app.post("/token/refresh", response_model=Token)
+async def refresh_access_token(request: Request):
+    db = SessionLocal()
+    try:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing refresh token")
+        
+        refresh_token = auth_header.split(" ")[1]
+        
+        payload = jwt.decode(refresh_token, SECRET_KEY, algorithms=[ALGORITHM])
+        
+        email: str = payload.get("sub")
+        jti: str = payload.get("jti")
+        token_type: str = payload.get("type")
+        iat_timestamp: int = payload.get("iat")
+        
+        if email is None or jti is None or token_type != "refresh" or iat_timestamp is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+        
+        session = db.query(models.UserSession).filter(models.UserSession.jti == jti).first()
+        if not session:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token not found (revoked)")
+            
+        user = db.query(models.User).filter(models.User.id == session.user_id).first()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+
+        token_iat = datetime.fromtimestamp(iat_timestamp, tz=timezone.utc)
+        if user.tokens_valid_from and token_iat < user.tokens_valid_from.replace(tzinfo=timezone.utc):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token has been revoked")
+
+        now = datetime.now(timezone.utc)
+        access_jti = str(uuid.uuid4())
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token_data = {
+            "sub": user.email,
+            "iat": now,
+            "jti": access_jti,
+            "type": "access"
+        }
+        access_token = create_access_token(access_token_data, expires_delta=access_token_expires)
+
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer"
+        }
+        
+    except JWTError as e:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid refresh token: {e}")
+    finally:
+        db.close()
+
 
 @app.get("/users/me", response_model=User)
-async def read_users_me(token_data: TokenData = Depends(get_token_data)):
-    # ... (Unchanged) ...
-    db = SessionLocal()
-    try:
-        user = get_user_by_email(db, email=token_data.email)
-        if user is None: raise HTTPException(status_code=404, detail="User not found")
-        return user
-    finally: db.close()
+async def read_users_me(
+    current_user: models.User = Depends(get_current_user_from_token)
+):
+    return current_user
 
 # --- Camera Endpoints ---
-# ... (Unchanged: GET, POST, PUT, DELETE /api/cameras) ...
 @app.get("/api/cameras", response_model=List[Camera])
-async def read_user_cameras(token_data: TokenData = Depends(get_token_data)):
+async def read_user_cameras(
+    current_user: models.User = Depends(get_current_user_from_token)
+):
     db = SessionLocal()
     try:
-        user = get_user_by_email(db, email=token_data.email)
-        if user is None: raise HTTPException(status_code=404, detail="User not found")
-        cameras = get_cameras_by_user(db, user_id=user.id)
-        return cameras
-    finally: db.close()
+        return current_user.cameras
+    finally:
+        db.close()
 
 @app.post("/api/cameras", response_model=Camera, status_code=status.HTTP_201_CREATED)
-async def create_camera_for_user(camera: CameraCreate, token_data: TokenData = Depends(get_token_data)):
+async def create_camera_for_user(
+    camera: CameraCreate,
+    current_user: models.User = Depends(get_current_user_from_token)
+):
     db = SessionLocal()
     try:
-        user = get_user_by_email(db, email=token_data.email)
-        if user is None: raise HTTPException(status_code=404, detail="User not found")
-        max_order = db.query(func.max(models.Camera.display_order)).filter(models.Camera.owner_id == user.id).scalar()
+        user_id = current_user.id
+        max_order = db.query(func.max(models.Camera.display_order)).filter(models.Camera.owner_id == user_id).scalar()
         new_order = (max_order or 0) + 1
         safe_name = re.sub(r'[^a-zA-Z0-9_-]', '', camera.name.lower().replace(" ", "_"))
-        path_name = f"user_{user.id}_{safe_name}"
-        existing = db.query(models.Camera).filter(models.Camera.path == path_name, models.Camera.owner_id == user.id).first()
+        path_name = f"user_{user_id}_{safe_name}"
+        existing = db.query(models.Camera).filter(models.Camera.path == path_name, models.Camera.owner_id == user_id).first()
         if existing: raise HTTPException(status_code=400, detail="A camera with this name already exists")
         mediamtx_url = f"http://mediamtx:9997/v3/config/paths/add/{path_name}"
         try:
@@ -298,7 +397,7 @@ async def create_camera_for_user(camera: CameraCreate, token_data: TokenData = D
             response.raise_for_status()
         except httpx.RequestError as e: raise HTTPException(status_code=500, detail=f"Failed to contact mediamtx: {e}")
         except httpx.HTTPStatusError as e: raise HTTPException(status_code=e.response.status_code, detail=f"mediamtx error: {e.response.text}")
-        db_camera = models.Camera(name=camera.name, path=path_name, rtsp_url=camera.rtsp_url, owner_id=user.id, display_order=new_order)
+        db_camera = models.Camera(name=camera.name, path=path_name, rtsp_url=camera.rtsp_url, owner_id=user_id, display_order=new_order)
         db.add(db_camera)
         db.commit()
         db.refresh(db_camera)
@@ -306,13 +405,16 @@ async def create_camera_for_user(camera: CameraCreate, token_data: TokenData = D
     finally: db.close()
 
 @app.put("/api/cameras/{camera_id}", response_model=Camera)
-async def update_camera(camera_id: int, camera_update: CameraUpdate, token_data: TokenData = Depends(get_token_data)):
+async def update_camera(
+    camera_id: int, 
+    camera_update: CameraUpdate, 
+    current_user: models.User = Depends(get_current_user_from_token)
+):
     db = SessionLocal()
     try:
-        user = get_user_by_email(db, email=token_data.email)
-        if not user: raise HTTPException(status_code=404, detail="User not found")
-        db_camera = db.query(models.Camera).filter(models.Camera.id == camera_id, models.Camera.owner_id == user.id).first()
+        db_camera = db.query(models.Camera).filter(models.Camera.id == camera_id, models.Camera.owner_id == current_user.id).first()
         if not db_camera: raise HTTPException(status_code=404, detail="Camera not found")
+        
         old_path = db_camera.path
         new_name_changed = db_camera.name != camera_update.name
         db_camera.name = camera_update.name
@@ -321,7 +423,7 @@ async def update_camera(camera_id: int, camera_update: CameraUpdate, token_data:
         async with httpx.AsyncClient() as client:
             if new_name_changed:
                 safe_name = re.sub(r'[^a-zA-Z0-9_-]', '', camera_update.name.lower().replace(" ", "_"))
-                new_path = f"user_{user.id}_{safe_name}"
+                new_path = f"user_{current_user.id}_{safe_name}"
                 db_camera.path = new_path
                 log.info(f"--- UPDATING: Deleting old path {old_path} ---")
                 old_mediamtx_url = f"http://mediamtx:9997/v3/config/paths/delete/{old_path}"
@@ -355,14 +457,15 @@ async def update_camera(camera_id: int, camera_update: CameraUpdate, token_data:
         db.close()
 
 @app.delete("/api/cameras/{camera_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_camera(camera_id: int, token_data: TokenData = Depends(get_token_data)):
-    # ... (Unchanged) ...
+async def delete_camera(
+    camera_id: int, 
+    current_user: models.User = Depends(get_current_user_from_token)
+):
     db = SessionLocal()
     try:
-        user = get_user_by_email(db, email=token_data.email)
-        if user is None: raise HTTPException(status_code=404, detail="User not found")
-        db_camera = db.query(models.Camera).filter(models.Camera.id == camera_id, models.Camera.owner_id == user.id).first()
+        db_camera = db.query(models.Camera).filter(models.Camera.id == camera_id, models.Camera.owner_id == current_user.id).first()
         if db_camera is None: raise HTTPException(status_code=404, detail="Camera not found or user does not own it")
+        
         mediamtx_url = f"http://mediamtx:9997/v3/config/paths/delete/{db_camera.path}"
         try:
             auth = ("admin", "mysecretpassword")
@@ -379,13 +482,13 @@ async def delete_camera(camera_id: int, token_data: TokenData = Depends(get_toke
     finally: db.close()
 
 @app.post("/api/cameras/reorder", status_code=status.HTTP_200_OK)
-async def reorder_cameras(req: ReorderRequest, token_data: TokenData = Depends(get_token_data)):
-    # ... (Unchanged) ...
+async def reorder_cameras(
+    req: ReorderRequest, 
+    current_user: models.User = Depends(get_current_user_from_token)
+):
     db = SessionLocal()
     try:
-        user = get_user_by_email(db, email=token_data.email)
-        if not user: raise HTTPException(status_code=404, detail="User not found")
-        user_cameras = {cam.id: cam for cam in user.cameras}
+        user_cameras = {cam.id: cam for cam in current_user.cameras}
         if len(req.camera_ids) != len(user_cameras): raise HTTPException(status_code=400, detail="Camera list mismatch")
         for index, cam_id in enumerate(req.camera_ids):
             if cam_id not in user_cameras: raise HTTPException(status_code=400, detail=f"Invalid camera ID: {cam_id}")
@@ -400,8 +503,11 @@ async def reorder_cameras(req: ReorderRequest, token_data: TokenData = Depends(g
     finally: db.close()
 
 @app.post("/api/cameras/test-connection")
-async def test_camera_connection(req: TestCameraRequest, background_tasks: BackgroundTasks, token_data: TokenData = Depends(get_token_data)):
-    # ... (Unchanged) ...
+async def test_camera_connection(
+    req: TestCameraRequest, 
+    background_tasks: BackgroundTasks, 
+    current_user: models.User = Depends(get_current_user_from_token)
+):
     temp_path = f"test_{uuid.uuid4()}"
     log.info(f"--- Creating temp test path {temp_path} ---")
     mediamtx_url = f"http://mediamtx:9997/v3/config/paths/add/{temp_path}"
@@ -432,13 +538,14 @@ async def delete_temp_path(path: str):
 # ====================================================================
 #                 Settings Page Endpoints
 # ====================================================================
-# ... (Unchanged: update_user_me, change_password, delete_account) ...
 @app.put("/api/users/me", response_model=User)
-async def update_user_me(user_update: UserUpdate, token_data: TokenData = Depends(get_token_data)):
+async def update_user_me(
+    user_update: UserUpdate, 
+    current_user: models.User = Depends(get_current_user_from_token)
+):
     db = SessionLocal()
     try:
-        user = get_user_by_email(db, email=token_data.email)
-        if not user: raise HTTPException(status_code=404, detail="User not found")
+        user = db.merge(current_user)
         user.display_name = user_update.display_name
         db.commit()
         db.refresh(user)
@@ -446,11 +553,13 @@ async def update_user_me(user_update: UserUpdate, token_data: TokenData = Depend
     finally: db.close()
 
 @app.post("/api/users/change-password", status_code=status.HTTP_200_OK)
-async def change_password(passwords: PasswordChange, token_data: TokenData = Depends(get_token_data)):
+async def change_password(
+    passwords: PasswordChange, 
+    current_user: models.User = Depends(get_current_user_from_token)
+):
     db = SessionLocal()
     try:
-        user = get_user_by_email(db, email=token_data.email)
-        if not user: raise HTTPException(status_code=404, detail="User not found")
+        user = db.merge(current_user)
         if not verify_password(passwords.current_password, user.hashed_password):
             raise HTTPException(status_code=400, detail="Incorrect current password")
         new_hashed_password = get_password_hash(passwords.new_password)
@@ -461,11 +570,12 @@ async def change_password(passwords: PasswordChange, token_data: TokenData = Dep
     finally: db.close()
 
 @app.delete("/api/users/delete-account", status_code=status.HTTP_200_OK)
-async def delete_account(token_data: TokenData = Depends(get_token_data)):
+async def delete_account(
+    current_user: models.User = Depends(get_current_user_from_token)
+):
     db = SessionLocal()
     try:
-        user = get_user_by_email(db, email=token_data.email)
-        if not user: raise HTTPException(status_code=404, detail="User not found")
+        user = db.merge(current_user)
         cameras = get_cameras_by_user(db, user_id=user.id)
         auth = ("admin", "mysecretpassword")
         async with httpx.AsyncClient() as client:
@@ -477,41 +587,42 @@ async def delete_account(token_data: TokenData = Depends(get_token_data)):
                 db.delete(camera)
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
+        
+        db.query(models.UserSession).filter(models.UserSession.user_id == user.id).delete()
+        
         db.delete(user)
         db.commit()
         return {"message": "Account and all associated cameras deleted successfully"}
     finally: db.close()
 
 @app.post("/api/users/logout-all", status_code=status.HTTP_200_OK)
-async def logout_all_sessions(token_data: TokenData = Depends(get_token_data)):
+async def logout_all_sessions(
+    current_user: models.User = Depends(get_current_user_from_token)
+):
     db = SessionLocal()
     try:
-        user = get_user_by_email(db, email=token_data.email)
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        # This is the "kill switch".
+        user = db.merge(current_user)
         user.tokens_valid_from = datetime.now(timezone.utc)
-        
-        # --- 10. NEW: Also clear all sessions from the DB ---
         db.query(models.UserSession).filter(models.UserSession.user_id == user.id).delete()
-        
         db.commit()
-        
         return {"message": "All other sessions have been logged out."}
     finally:
         db.close()
 
-# --- 11. NEW: Session Management Endpoints ---
+@app.get("/api/webrtc-creds")
+async def get_webrtc_credentials(
+    current_user: models.User = Depends(get_current_user_from_token)
+):
+    return {"user": "viewer", "pass": "secret"}
+
+# --- Session Management Endpoints ---
 @app.get("/api/sessions", response_model=List[UserSession])
-async def get_sessions(token_data: TokenData = Depends(get_token_data)):
+async def get_sessions(
+    current_user: models.User = Depends(get_current_user_from_token)
+):
     db = SessionLocal()
     try:
-        user = get_user_by_email(db, email=token_data.email)
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        sessions = db.query(models.UserSession).filter(models.UserSession.user_id == user.id).all()
+        sessions = db.query(models.UserSession).filter(models.UserSession.user_id == current_user.id).all()
         return sessions
     finally:
         db.close()
@@ -519,17 +630,13 @@ async def get_sessions(token_data: TokenData = Depends(get_token_data)):
 @app.delete("/api/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def logout_session(
     session_id: int,
-    token_data: TokenData = Depends(get_token_data)
+    current_user: models.User = Depends(get_current_user_from_token)
 ):
     db = SessionLocal()
     try:
-        user = get_user_by_email(db, email=token_data.email)
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
         session = db.query(models.UserSession).filter(
             models.UserSession.id == session_id,
-            models.UserSession.user_id == user.id
+            models.UserSession.user_id == current_user.id
         ).first()
         
         if not session:
