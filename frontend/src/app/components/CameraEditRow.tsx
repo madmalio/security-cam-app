@@ -11,24 +11,28 @@ import {
   X,
   Wifi,
   GripVertical,
+  Copy,
+  Check,
 } from "lucide-react";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import TestStreamModal from "./TestStreamModal";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useAuth } from "@/app/contexts/AuthContext"; // <-- 1. IMPORT
+import { useAuth } from "@/app/contexts/AuthContext";
+
+// --- 2. Get API_URL from environment ---
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 interface CameraEditRowProps {
   camera: Camera;
   onUpdate: () => void;
-  // 2. No more token prop
 }
 
 export default function CameraEditRow({
   camera,
   onUpdate,
 }: CameraEditRowProps) {
-  const { api } = useAuth(); // <-- 3. Get api from context
+  const { api } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -39,6 +43,9 @@ export default function CameraEditRow({
 
   const [name, setName] = useState(camera.name);
   const [rtspUrl, setRtspUrl] = useState(camera.rtsp_url);
+
+  // --- 3. State for copy button ---
+  const [isCopied, setIsCopied] = useState(false);
 
   const {
     attributes,
@@ -55,7 +62,6 @@ export default function CameraEditRow({
     zIndex: isDragging ? 10 : "auto",
   };
 
-  // 4. Update to use 'api' hook
   const handleTestConnection = async () => {
     setIsTesting(true);
     try {
@@ -80,7 +86,6 @@ export default function CameraEditRow({
     }
   };
 
-  // 5. Update to use 'api' hook
   const handleSave = async () => {
     setIsSaving(true);
     try {
@@ -105,7 +110,6 @@ export default function CameraEditRow({
     }
   };
 
-  // 6. Update to use 'api' hook
   const handleDelete = async () => {
     setIsDeleting(true);
     try {
@@ -133,6 +137,15 @@ export default function CameraEditRow({
     setName(camera.name);
     setRtspUrl(camera.rtsp_url);
     setIsEditing(false);
+  };
+
+  // --- 4. NEW: Handle copy to clipboard ---
+  const webhookUrl = `${API_URL}/api/webhook/motion/${camera.webhook_secret}`;
+  const handleCopy = () => {
+    navigator.clipboard.writeText(webhookUrl);
+    setIsCopied(true);
+    toast.success("Webhook URL copied to clipboard!");
+    setTimeout(() => setIsCopied(false), 2000);
   };
 
   if (isEditing) {
@@ -220,6 +233,7 @@ export default function CameraEditRow({
   }
 
   return (
+    // This is the "View" mode
     <>
       <div
         ref={setNodeRef}
@@ -273,6 +287,40 @@ export default function CameraEditRow({
               title="Delete Camera"
             >
               <Trash2 className="h-5 w-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* --- 5. NEW: Webhook URL Section --- */}
+        <div className="mt-4 border-t border-gray-200 pt-4 dark:border-zinc-700">
+          <label
+            htmlFor={`webhook-${camera.id}`}
+            className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300"
+          >
+            Motion Webhook URL
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              id={`webhook-${camera.id}`}
+              value={webhookUrl}
+              readOnly
+              className="w-full flex-1 rounded-md border border-gray-300 bg-gray-50 p-2 text-gray-600 focus:outline-none dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-300"
+            />
+            <button
+              onClick={handleCopy}
+              className={`flex w-12 items-center justify-center rounded-lg ${
+                isCopied
+                  ? "bg-green-600 text-white"
+                  : "bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-zinc-600 dark:text-zinc-200 dark:hover:bg-zinc-500"
+              }`}
+              title="Copy to clipboard"
+            >
+              {isCopied ? (
+                <Check className="h-5 w-5" />
+              ) : (
+                <Copy className="h-5 w-5" />
+              )}
             </button>
           </div>
         </div>

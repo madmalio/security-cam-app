@@ -4,6 +4,7 @@ export interface Camera {
   path: string;
   rtsp_url: string;
   display_order: number;
+  webhook_secret: string;
 }
 
 export interface User {
@@ -19,4 +20,15 @@ export interface UserSession {
   user_agent: string | null;
   ip_address: string | null;
   created_at: string;
+}
+
+export interface Event {
+  id: number;
+  start_time: string;
+  end_time: string | null;
+  reason: string;
+  video_path: string;
+  camera_id: number;
+  user_id: number;
+  camera: Camera;
 }

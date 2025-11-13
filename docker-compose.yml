@@ -8,16 +8,17 @@ services:
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8080
       - NEXT_PUBLIC_WHEP_URL=http://localhost:8888
+      - NEXT_PUBLIC_HLS_URL=http://localhost:8887 # We can remove this later, but it's fine for now
     depends_on:
       - backend
     networks:
       - cam_net
     restart: unless-stopped
-    user: "appuser" # <-- 1. Run as the non-root user
-    read_only: true # <-- 2. Make filesystem read-only
-    tmpfs: # <-- 3. Mount a temporary filesystem for Next.js to write to
+    user: "appuser"
+    read_only: true
+    tmpfs:
       - /tmp
-    security_opt: # <-- 4. Prevent privilege escalation
+    security_opt:
       - no-new-privileges:true
 
   # 2. Backend (FastAPI)
@@ -39,9 +40,11 @@ services:
     networks:
       - cam_net
     restart: always
-    user: "appuser" # <-- 1. Run as the non-root user
-    security_opt: # <-- 4. Prevent privilege escalation
+    user: "appuser"
+    security_opt:
       - no-new-privileges:true
+    volumes: # <-- ADD THIS BLOCK
+      - recordings_data:/recordings
 
   # 3. Database (PostgreSQL)
   db:
@@ -62,7 +65,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-    security_opt: # <-- 4. Prevent privilege escalation
+    security_opt:
       - no-new-privileges:true
 
   # 4. Media Server (mediamtx)
@@ -70,16 +73,17 @@ services:
     image: bluenviron/mediamtx:1-ffmpeg
     restart: always
     ports:
-      - "8888:8888" # WHEP/WHIP (WebRTC)
-      - "8554:8554" # RTSP
-      - "1935:1935" # RTMP
+      - "8888:8888"
+      - "8554:8554"
+      - "1935:1935"
       - "8189:8189/udp"
-      - "8887:8887" # HLS
+      - "8887:8887"
     volumes:
       - ./mediamtx.yml:/mediamtx.yml
+      - recordings_data:/rec
     networks:
       - cam_net
-    security_opt: # <-- 4. Prevent privilege escalation
+    security_opt:
       - no-new-privileges:true
 
 networks:
@@ -88,6 +92,7 @@ networks:
 
 volumes:
   db_data:
+  recordings_data: {}
 
 secrets:
   db_password:

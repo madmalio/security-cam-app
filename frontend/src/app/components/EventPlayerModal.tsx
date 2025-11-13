@@ -1,38 +1,24 @@
 "use client";
 
-import React, { Fragment, useState, useEffect } from "react";
+import React, { Fragment } from "react";
 import { Dialog, Transition } from "@headlessui/react";
 import { X } from "lucide-react";
-import LiveCameraView from "./LiveCameraView";
-import { Camera } from "@/app/types";
+import EventPlayer from "./EventPlayer";
+import { Event } from "@/app/types";
+import { format } from "date-fns";
 
-interface TestStreamModalProps {
+interface EventPlayerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  testStreamPath: string | null;
+  event: Event | null;
 }
 
-export default function TestStreamModal({
+export default function EventPlayerModal({
   isOpen,
   onClose,
-  testStreamPath,
-}: TestStreamModalProps) {
-  const [testCamera, setTestCamera] = useState<Camera | null>(null);
-
-  useEffect(() => {
-    if (isOpen && testStreamPath) {
-      setTestCamera({
-        id: 9999,
-        name: "Test Stream",
-        path: testStreamPath,
-        rtsp_url: "",
-        display_order: 0,
-        webhook_secret: "test-secret", // <-- FIX: Added dummy secret
-      });
-    } else {
-      setTestCamera(null);
-    }
-  }, [isOpen, testStreamPath]);
+  event,
+}: EventPlayerModalProps) {
+  if (!event) return null;
 
   return (
     <Transition appear show={isOpen} as={Fragment}>
@@ -60,12 +46,12 @@ export default function TestStreamModal({
               leaveFrom="opacity-100 scale-100"
               leaveTo="opacity-0 scale-95"
             >
-              <Dialog.Panel className="w-full max-w-2xl transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all dark:bg-zinc-800">
+              <Dialog.Panel className="w-full max-w-4xl transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all dark:bg-zinc-800">
                 <Dialog.Title
                   as="h3"
                   className="flex justify-between items-center text-lg font-medium leading-6 text-gray-900 dark:text-white"
                 >
-                  Testing Connection...
+                  Event: {event.camera.name}
                   <button
                     onClick={onClose}
                     className="rounded-full p-1 text-gray-600 hover:bg-gray-100 dark:text-zinc-300 dark:hover:bg-zinc-700"
@@ -73,16 +59,17 @@ export default function TestStreamModal({
                     <X className="h-5 w-5" />
                   </button>
                 </Dialog.Title>
-                <div className="mt-4">
-                  <p className="text-sm text-gray-500 dark:text-zinc-400 mb-4">
-                    The video player below will attempt to connect to your
-                    stream. If you see a "Connection Failed" error, please check
-                    your RTSP URL and credentials.
+                <div className="mt-2">
+                  <p className="text-sm text-gray-500 dark:text-zinc-400">
+                    Recorded on:{" "}
+                    {format(
+                      new Date(event.start_time),
+                      "MMMM d, yyyy 'at' h:mm:ss a"
+                    )}
                   </p>
-
-                  {testCamera && (
-                    <LiveCameraView camera={testCamera} isMuted={false} />
-                  )}
+                </div>
+                <div className="mt-4">
+                  <EventPlayer videoSrc={event.video_path} />
                 </div>
               </Dialog.Panel>
             </Transition.Child>

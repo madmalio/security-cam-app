@@ -8,16 +8,18 @@ WORKDIR /code
 RUN addgroup --system appgroup && \
     adduser --system --ingroup appgroup --no-create-home appuser
 
+# This creates the mount point *before* we switch users
+# and gives our 'appuser' ownership of it.
+RUN mkdir /recordings && chown appuser:appgroup /recordings
+
 # Copy the requirements file and install dependencies
-# --- 1. Set owner during copy ---
 COPY --chown=appuser:appgroup ./requirements.txt /code/requirements.txt
 RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
 
 # Copy the rest of the backend application code
-# --- 2. Set owner during copy ---
 COPY --chown=appuser:appgroup . /code
 
-# --- 4. Switch to the non-root user ---
+# --- Switch to the non-root user ---
 USER appuser
 
 # Run the FastAPI server

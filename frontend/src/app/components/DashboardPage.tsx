@@ -16,10 +16,11 @@ import {
   ChevronDown,
   Settings,
   ArrowLeft,
+  Film, // <-- 1. IMPORT
 } from "lucide-react";
 import { Menu as HeadlessMenu, Transition } from "@headlessui/react";
 import { useSettings } from "@/app/contexts/SettingsContext";
-import { useAuth } from "@/app/contexts/AuthContext"; // <-- 1. IMPORT
+import { useAuth } from "@/app/contexts/AuthContext";
 
 import LiveCameraView from "./LiveCameraView";
 import CameraGridView from "./CameraGridView";
@@ -29,12 +30,11 @@ import FullscreenGridView from "./FullscreenGridView";
 import AddCameraModal from "./AddCameraModal";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import SettingsPage from "./SettingsPage";
+import EventsPage from "./EventsPage"; // <-- 2. IMPORT
 
-// 2. No more props!
 export default function DashboardPage() {
-  // 3. Get user, logout, and api from context
   const { user, logout, api } = useAuth();
-  if (!user) return null; // Should not happen if AuthProvider is working
+  if (!user) return null;
 
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [selectedCamera, setSelectedCamera] = useState<Camera | null>(null);
@@ -42,9 +42,11 @@ export default function DashboardPage() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [cameraToDelete, setCameraToDelete] = useState<Camera | null>(null);
-  const [currentView, setCurrentView] = useState<"dashboard" | "settings">(
-    "dashboard"
-  );
+
+  // --- 3. UPDATED currentView state ---
+  const [currentView, setCurrentView] = useState<
+    "dashboard" | "settings" | "events" // <-- Added 'events'
+  >("dashboard");
 
   const { defaultView, gridColumns } = useSettings();
 
@@ -76,12 +78,11 @@ export default function DashboardPage() {
     };
   }, []);
 
-  // 4. Update fetchCameras to use the 'api' hook
   const fetchCameras = useCallback(async () => {
     try {
       setError(null);
-      const response = await api("/api/cameras"); // <-- Use api
-      if (!response) return; // Logout or error already handled by hook
+      const response = await api("/api/cameras");
+      if (!response) return;
 
       if (!response.ok) {
         throw new Error("Failed to fetch cameras");
@@ -95,7 +96,7 @@ export default function DashboardPage() {
       setError(err.message);
       toast.error(err.message);
     }
-  }, [api, selectedCamera]); // <-- Add api and selectedCamera
+  }, [api, selectedCamera]);
 
   useEffect(() => {
     if (currentView === "dashboard") {
@@ -144,7 +145,6 @@ export default function DashboardPage() {
     setSelectedCamera(camera);
   };
 
-  // 5. Update handleDeleteCamera to use 'api' hook
   const handleDeleteCamera = async (cameraToDelete: Camera) => {
     const originalCameras = [...cameras];
     const originalSelected = selectedCamera;
@@ -167,8 +167,8 @@ export default function DashboardPage() {
     try {
       const response = await api(`/api/cameras/${cameraToDelete.id}`, {
         method: "DELETE",
-      }); // <-- Use api
-      if (!response) return; // Error handled by hook
+      });
+      if (!response) return;
 
       if (!response.ok) {
         setCameras(originalCameras);
@@ -186,6 +186,22 @@ export default function DashboardPage() {
   const openDeleteModal = (camera: Camera) => {
     setCameraToDelete(camera);
     setIsConfirmOpen(true);
+  };
+
+  // --- 4. NEW: Helper for main content ---
+  const renderMainContent = () => {
+    switch (currentView) {
+      case "dashboard":
+        return renderDashboardContent();
+      case "settings":
+        return (
+          <SettingsPage cameras={cameras} onCamerasUpdate={fetchCameras} />
+        );
+      case "events":
+        return <EventsPage />;
+      default:
+        return null;
+    }
   };
 
   const renderDashboardContent = () => {
@@ -233,6 +249,14 @@ export default function DashboardPage() {
     );
   };
 
+  // --- 5. NEW: Helper for header title ---
+  const getHeaderText = () => {
+    if (currentView === "settings") return "Settings";
+    if (currentView === "events") return "Event Recordings";
+    if (viewMode === "single" && selectedCamera) return selectedCamera.name;
+    return "Dashboard";
+  };
+
   return (
     <div className="flex h-screen w-full bg-gray-100 dark:bg-zinc-900">
       <div className={`relative flex flex-1 flex-col overflow-hidden`}>
@@ -240,14 +264,11 @@ export default function DashboardPage() {
           <div className="flex items-center gap-4">
             <Video className="h-8 w-8 text-blue-600 dark:text-blue-500" />
             <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">
-              {currentView === "settings"
-                ? "Settings"
-                : viewMode === "single" && selectedCamera
-                ? selectedCamera.name
-                : "Dashboard"}
+              {getHeaderText()}
             </h1>
           </div>
           <div className="flex items-center">
+            {/* --- 6. UPDATED: Show/hide logic for header buttons --- */}
             {currentView === "dashboard" &&
               viewMode !== "single" &&
               cameras.length > 0 && (
@@ -301,7 +322,8 @@ export default function DashboardPage() {
                   )}
                 </button>
               )}
-            {currentView === "settings" && (
+            {/* --- 7. NEW: Back to Dashboard button --- */}
+            {currentView !== "dashboard" && (
               <button
                 onClick={() => setCurrentView("dashboard")}
                 className="mr-4 flex items-center gap-1 rounded-md px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100 dark:text-zinc-300 dark:hover:bg-zinc-700"
@@ -311,6 +333,7 @@ export default function DashboardPage() {
                 Back
               </button>
             )}
+
             <UserIcon className="h-8 w-8 rounded-full bg-gray-200 p-1 text-gray-600 dark:bg-zinc-700 dark:text-zinc-300" />
             <HeadlessMenu as="div" className="relative ml-1">
               <HeadlessMenu.Button className="flex rounded-full p-1 text-gray-600 hover:bg-gray-100 dark:text-zinc-300 dark:hover:bg-zinc-700">
@@ -347,6 +370,20 @@ export default function DashboardPage() {
                       </button>
                     )}
                   </HeadlessMenu.Item>
+                  {/* --- 8. NEW: Events Button --- */}
+                  <HeadlessMenu.Item>
+                    {({ active }) => (
+                      <button
+                        onClick={() => setCurrentView("events")}
+                        className={`${
+                          active ? "bg-gray-100 dark:bg-zinc-700" : ""
+                        } flex w-full items-center px-4 py-2 text-sm text-gray-700 dark:text-zinc-200`}
+                      >
+                        <Film className="mr-2 h-5 w-5" />
+                        Events
+                      </button>
+                    )}
+                  </HeadlessMenu.Item>
                   <HeadlessMenu.Item>
                     {({ active }) => (
                       <button
@@ -363,7 +400,7 @@ export default function DashboardPage() {
                   <HeadlessMenu.Item>
                     {({ active }) => (
                       <button
-                        onClick={logout} // <-- Use context logout
+                        onClick={logout}
                         className={`${
                           active ? "bg-gray-100 dark:bg-zinc-700" : ""
                         } flex w-full items-center px-4 py-2 text-sm text-gray-700 dark:text-zinc-200`}
@@ -380,11 +417,7 @@ export default function DashboardPage() {
         </header>
 
         <main className="flex-1 overflow-y-auto p-8 h-full">
-          {currentView === "dashboard" ? (
-            renderDashboardContent()
-          ) : (
-            <SettingsPage cameras={cameras} onCamerasUpdate={fetchCameras} />
-          )}
+          {renderMainContent()}
         </main>
       </div>
 
