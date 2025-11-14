@@ -11,8 +11,6 @@ import asyncio
 import hashlib
 import uuid
 from datetime import datetime, timezone, timedelta
-
-# --- 1. ADD THESE IMPORTS ---
 from fastapi.staticfiles import StaticFiles
 import os
 
@@ -33,14 +31,8 @@ models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
-# --- 2. MOUNT THE STATIC DIRECTORY ---
-# This tells FastAPI to serve any files in the /recordings folder
-# at the URL path /recordings
-# We also create the directory if it doesn't exist
-# NOTE: In your main.py, recordings are saved with 'rec/' prefix.
-# We will mount /recordings/rec to match.
-os.makedirs("/recordings/rec", exist_ok=True)
-app.mount("/rec", StaticFiles(directory="/recordings/rec"), name="recordings")
+os.makedirs("/recordings", exist_ok=True)
+app.mount("/recordings", StaticFiles(directory="/recordings"), name="recordings")
 
 
 # ====================================================================
@@ -50,7 +42,6 @@ app.mount("/rec", StaticFiles(directory="/recordings/rec"), name="recordings")
 origins = [
     "http://localhost:3000",
     "http://localhost:3001",
-    # "https://your-production-domain.com",
 ]
 
 app.add_middleware(
@@ -63,20 +54,29 @@ app.add_middleware(
 
 # --- Schemas ---
 class CameraBase(BaseModel): name: str
-class CameraCreate(BaseModel): name: str; rtsp_url: str
+class CameraCreate(BaseModel): 
+    name: str
+    rtsp_url: str
+    rtsp_substream_url: Optional[str] = None
 
 class Camera(CameraBase):
     id: int
     owner_id: int
     path: str
     rtsp_url: str
+    rtsp_substream_url: Optional[str] = None
     display_order: int
-    webhook_secret: str
+    motion_type: str
+    motion_roi: Optional[str] = None # <-- ADD THIS
     class Config: from_attributes = True 
 
 class CameraUpdate(BaseModel):
     name: str
     rtsp_url: str
+    rtsp_substream_url: Optional[str] = None
+    motion_type: str
+    motion_roi: Optional[str] = None # <-- ADD THIS
+
 class TestCameraRequest(BaseModel):
     rtsp_url: str
 class ReorderRequest(BaseModel):
@@ -161,10 +161,6 @@ async def on_startup():
             path_config = {
                 "source": camera.rtsp_url,
                 "sourceOnDemand": True,
-                "record": True,
-                "recordPath": "rec/%path-%Y%m%d-%H%M%S",
-                "recordFormat": "fmp4",
-                "recordDeleteAfter": "168h"
             }
             
             mediamtx_url = f"http://mediamtx:9997/v3/config/paths/patch/{camera.path}"
@@ -187,7 +183,7 @@ async def on_startup():
 # ====================================================================
 #                 Security & Auth
 # ====================================================================
-
+# ... (unchanged) ...
 def get_secret_key():
     try:
         with open("/run/secrets/jwt_secret_key", "r") as f:
@@ -195,18 +191,14 @@ def get_secret_key():
     except FileNotFoundError:
         print("!!! ERROR: 'jwt_secret_key' file not found. Using fallback for local dev.")
         return "oVlxx1WjIyVNfsr2WWROPcsVyBhW5L7u"
-
 SECRET_KEY = get_secret_key()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
 REFRESH_TOKEN_EXPIRE_DAYS = 30
-
 pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
-
 def verify_password(plain_password, hashed_password): return pwd_context.verify(plain_password, hashed_password)
 def get_password_hash(password): return pwd_context.hash(password)
-
 def create_access_token(data: dict, expires_delta: timedelta):
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + expires_delta
@@ -217,6 +209,7 @@ def create_access_token(data: dict, expires_delta: timedelta):
 # ====================================================================
 #                 DB Functions
 # ====================================================================
+# ... (unchanged) ...
 def get_user_by_email(db: Session, email: str):
     return db.query(models.User).options(joinedload(models.User.cameras)).filter(models.User.email == email).first()
 def get_gravatar_hash(email: str) -> str:
@@ -241,6 +234,7 @@ def get_cameras_by_user(db: Session, user_id: int):
 # ====================================================================
 #                 Auth Dependency
 # ====================================================================
+# ... (unchanged) ...
 async def get_current_user_from_token(token: str | None = Depends(oauth2_scheme)) -> models.User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -253,25 +247,19 @@ async def get_current_user_from_token(token: str | None = Depends(oauth2_scheme)
         headers={"WWW-Authenticate": "Bearer"},
     )
     if token is None: raise credentials_exception
-    
     db = SessionLocal()
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
         iat_timestamp: int = payload.get("iat") 
-        
         if email is None or iat_timestamp is None:
             raise credentials_exception
-            
         token_iat = datetime.fromtimestamp(iat_timestamp, tz=timezone.utc)
-        
         user = get_user_by_email(db, email=email)
         if user is None:
             raise credentials_exception
-        
         if user.tokens_valid_from and token_iat < user.tokens_valid_from.replace(tzinfo=timezone.utc):
             raise revoked_exception
-            
         return user
     except JWTError as e:
         credentials_exception.detail = f"Could not validate credentials: {e}"
@@ -282,15 +270,14 @@ async def get_current_user_from_token(token: str | None = Depends(oauth2_scheme)
 # ====================================================================
 #                 API Endpoints
 # ====================================================================
+# ... ( / , /register, /token, /token/refresh, /users/me are unchanged) ...
 @app.get("/")
 def read_root(): return {"message": "Security Camera API is running!"}
-
 @app.post("/register", response_model=User)
 def register_user(user: UserCreate, db: Session = Depends(get_db)):
     db_user = get_user_by_email(db, email=user.email)
     if db_user: raise HTTPException(status_code=400, detail="Email already registered")
     return create_user_db(db=db, user=user)
-
 @app.post("/token", response_model=Token)
 async def login_for_access_token(
     request: Request, 
@@ -302,17 +289,17 @@ async def login_for_access_token(
         if not user or not verify_password(form_data.password, user.hashed_password):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password", headers={"WWW-Authenticate": "Bearer"},)
         
-        now = datetime.now(timezone.utc)
+        now_utc = datetime.now(timezone.utc)
         
         access_jti = str(uuid.uuid4())
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-        access_token_data = {"sub": user.email, "iat": now, "jti": access_jti, "type": "access"}
+        access_token_data = {"sub": user.email, "iat": now_utc, "jti": access_jti, "type": "access"}
         access_token = create_access_token(access_token_data, expires_delta=access_token_expires)
         
         refresh_jti = str(uuid.uuid4())
         refresh_token_expires = timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-        refresh_token_expires_at = now + refresh_token_expires
-        refresh_token_data = {"sub": user.email, "iat": now, "jti": refresh_jti, "type": "refresh"}
+        refresh_token_expires_at = now_utc + refresh_token_expires
+        refresh_token_data = {"sub": user.email, "iat": now_utc, "jti": refresh_jti, "type": "refresh"}
         refresh_token = create_access_token(refresh_token_data, expires_delta=refresh_token_expires)
         
         new_session = models.UserSession(
@@ -327,7 +314,6 @@ async def login_for_access_token(
         
         return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
     finally: db.close()
-
 @app.post("/token/refresh", response_model=Token)
 async def refresh_access_token(request: Request):
     db = SessionLocal()
@@ -359,10 +345,10 @@ async def refresh_access_token(request: Request):
         if user.tokens_valid_from and token_iat < user.tokens_valid_from.replace(tzinfo=timezone.utc):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token has been revoked")
 
-        now = datetime.now(timezone.utc)
+        now_utc = datetime.now(timezone.utc)
         access_jti = str(uuid.uuid4())
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-        access_token_data = {"sub": user.email, "iat": now, "jti": access_jti, "type": "access"}
+        access_token_data = {"sub": user.email, "iat": now_utc, "jti": access_jti, "type": "access"}
         access_token = create_access_token(access_token_data, expires_delta=access_token_expires)
 
         return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
@@ -371,7 +357,6 @@ async def refresh_access_token(request: Request):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid refresh token: {e}")
     finally:
         db.close()
-
 @app.get("/users/me", response_model=User)
 async def read_users_me(current_user: models.User = Depends(get_current_user_from_token)):
     return current_user
@@ -393,16 +378,13 @@ async def create_camera_for_user(
         new_order = (max_order or 0) + 1
         safe_name = re.sub(r'[^a-zA-Z0-9_-]', '', camera.name.lower().replace(" ", "_"))
         path_name = f"user_{user_id}_{safe_name}"
-        existing = db.query(models.Camera).filter(models.Camera.path == path_name, models.Camera.owner_id == user_id).first()
-        if existing: raise HTTPException(status_code=400, detail="A camera with this name already exists")
-        
+        existing = db.query(models.Camera).filter(models.Camera.path == path_name).first()
+        if existing: 
+             path_name = f"{path_name}_{str(uuid.uuid4())[:4]}"
+
         path_config = {
             "source": camera.rtsp_url,
             "sourceOnDemand": True,
-            "record": True,
-            "recordPath": "rec/%path-%Y%m%d-%H%M%S",
-            "recordFormat": "fmp4",
-            "recordDeleteAfter": "168h"
         }
         
         mediamtx_url = f"http://mediamtx:9997/v3/config/paths/add/{path_name}"
@@ -414,7 +396,15 @@ async def create_camera_for_user(
         except httpx.RequestError as e: raise HTTPException(status_code=500, detail=f"Failed to contact mediamtx: {e}")
         except httpx.HTTPStatusError as e: raise HTTPException(status_code=e.response.status_code, detail=f"mediamtx error: {e.response.text}")
         
-        db_camera = models.Camera(name=camera.name, path=path_name, rtsp_url=camera.rtsp_url, owner_id=user_id, display_order=new_order)
+        db_camera = models.Camera(
+            name=camera.name, 
+            path=path_name, 
+            rtsp_url=camera.rtsp_url, 
+            rtsp_substream_url=camera.rtsp_substream_url,
+            owner_id=user_id, 
+            display_order=new_order,
+            motion_type="off"
+        )
         db.add(db_camera)
         db.commit()
         db.refresh(db_camera)
@@ -424,7 +414,7 @@ async def create_camera_for_user(
 @app.put("/api/cameras/{camera_id}", response_model=Camera)
 async def update_camera(
     camera_id: int, 
-    camera_update: CameraUpdate, 
+    camera_update: CameraUpdate,
     current_user: models.User = Depends(get_current_user_from_token)
 ):
     db = SessionLocal()
@@ -436,21 +426,24 @@ async def update_camera(
         new_name_changed = db_camera.name != camera_update.name
         db_camera.name = camera_update.name
         db_camera.rtsp_url = camera_update.rtsp_url
+        db_camera.rtsp_substream_url = camera_update.rtsp_substream_url
+        db_camera.motion_type = camera_update.motion_type
+        db_camera.motion_roi = camera_update.motion_roi # <-- SAVE ROI
         auth = ("admin", "mysecretpassword")
         
         path_config = {
             "source": camera_update.rtsp_url,
             "sourceOnDemand": True,
-            "record": True,
-            "recordPath": "rec/%path-%Y%m%d-%H%M%S",
-            "recordFormat": "fmp4",
-            "recordDeleteAfter": "168h"
         }
         
         async with httpx.AsyncClient() as client:
             if new_name_changed:
                 safe_name = re.sub(r'[^a-zA-Z0-9_-]', '', camera_update.name.lower().replace(" ", "_"))
                 new_path = f"user_{current_user.id}_{safe_name}"
+                existing = db.query(models.Camera).filter(models.Camera.path == new_path).first()
+                if existing:
+                    new_path = f"{new_path}_{str(uuid.uuid4())[:4]}"
+                
                 db_camera.path = new_path
                 
                 log.info(f"--- UPDATING: Deleting old path {old_path} ---")
@@ -485,6 +478,7 @@ async def update_camera(
     finally:
         db.close()
 
+# ... (rest of endpoints are unchanged) ...
 @app.delete("/api/cameras/{camera_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_camera(
     camera_id: int, 
@@ -510,7 +504,6 @@ async def delete_camera(
         db.commit()
         return
     finally: db.close()
-
 @app.post("/api/cameras/reorder", status_code=status.HTTP_200_OK)
 async def reorder_cameras(
     req: ReorderRequest, 
@@ -531,7 +524,6 @@ async def reorder_cameras(
         log.error(f"--- Error reordering cameras: {e} ---")
         raise HTTPException(status_code=500, detail="Failed to reorder cameras")
     finally: db.close()
-
 @app.post("/api/cameras/test-connection")
 async def test_camera_connection(
     req: TestCameraRequest, 
@@ -564,52 +556,28 @@ async def delete_temp_path(path: str):
             await client.delete(mediamtx_url, auth=auth)
     except Exception as e:
         log.error(f"--- Failed to delete temp path {path}: {e} ---")
-
-# ====================================================================
-#                 Event & Recording Endpoints
-# ====================================================================
-
-async def stop_recording(path: str, event_id: int):
-    await asyncio.sleep(60)
-    log.info(f"--- Stopping recording for path {path} ---")
-    
-    db = SessionLocal()
-    try:
-        event = db.query(models.Event).filter(models.Event.id == event_id).first()
-        if event:
-            event.end_time = datetime.now(timezone.utc)
-            db.commit()
-    finally:
-        db.close()
-    
-    mediamtx_url = f"http://mediamtx:9997/v3/paths/restart/{path}"
-    auth = ("admin", "mysecretpassword")
-    try:
-        async with httpx.AsyncClient() as client:
-            await client.post(mediamtx_url, auth=auth)
-    except Exception as e:
-        log.error(f"--- Failed to stop recording for path {path}: {e} ---")
-
-@app.post("/api/webhook/motion/{camera_secret}")
+@app.post("/api/webhook/motion/{camera_path}")
 async def webhook_motion(
-    camera_secret: str,
-    background_tasks: BackgroundTasks,
+    camera_path: str,
     db: Session = Depends(get_db)
 ):
-    log.info(f"--- Motion webhook triggered for secret {camera_secret} ---")
+    log.info(f"--- Motion webhook triggered for path {camera_path} ---")
     
-    camera = db.query(models.Camera).filter(models.Camera.webhook_secret == camera_secret).first()
+    camera = db.query(models.Camera).filter(models.Camera.path == camera_path).first()
     if not camera:
-        log.warning(f"--- Webhook invalid: No camera found for secret {camera_secret} ---")
+        log.warning(f"--- Webhook invalid: No camera found for path {camera_path} ---")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera not found")
+        
+    if camera.motion_type != "webhook":
+        log.warning(f"--- Webhook ignored: Camera {camera_path} not set to 'webhook' mode ---")
+        return {"message": "Webhook ignored. Camera not in webhook mode."}
 
     now = datetime.now(timezone.utc)
-    # This path is now relative to the /recordings mount
-    video_db_path = f"rec/{camera.path}-{now.strftime('%Y%m%d-%H%M%S')}.mp4"
+    video_db_path = f"webhook-event-{now.strftime('%Y%m%d-%H%M%S')}.mp4"
     
     db_event = models.Event(
         start_time=now,
-        reason="motion",
+        reason="motion (webhook)",
         video_path=video_db_path,
         camera_id=camera.id,
         user_id=camera.owner_id
@@ -619,21 +587,7 @@ async def webhook_motion(
     db.refresh(db_event)
     
     log.info(f"--- Created Event {db_event.id} for camera {camera.name} ---")
-
-    mediamtx_url = f"http://mediamtx:9997/v3/config/paths/patch/{camera.path}"
-    auth = ("admin", "mysecretpassword")
-    try:
-        async with httpx.AsyncClient() as client:
-            # We must tell mediamtx to record to the *absolute* path inside its container
-            await client.patch(mediamtx_url, auth=auth, json={"recordPath": f"/{video_db_path}"})
-        
-        background_tasks.add_task(stop_recording, camera.path, db_event.id)
-        
-        return {"message": "Recording started", "event_id": db_event.id}
-    except Exception as e:
-        log.error(f"--- Failed to start recording for path {camera.path}: {e} ---")
-        raise HTTPException(status_code=500, detail="Failed to start recording")
-
+    return {"message": "Event logged"}
 @app.get("/api/events", response_model=List[Event])
 async def get_events(
     current_user: models.User = Depends(get_current_user_from_token),
@@ -648,10 +602,6 @@ async def get_events(
         .all()
     )
     return events
-
-# ====================================================================
-#                 Settings Page Endpoints
-# ====================================================================
 @app.put("/api/users/me", response_model=User)
 async def update_user_me(
     user_update: UserUpdate, 
@@ -665,7 +615,6 @@ async def update_user_me(
         db.refresh(user)
         return user
     finally: db.close()
-
 @app.post("/api/users/change-password", status_code=status.HTTP_200_OK)
 async def change_password(
     passwords: PasswordChange, 
@@ -682,7 +631,6 @@ async def change_password(
         db.commit()
         return {"message": "Password updated successfully"}
     finally: db.close()
-
 @app.delete("/api/users/delete-account", status_code=status.HTTP_200_OK)
 async def delete_account(
     current_user: models.User = Depends(get_current_user_from_token)
@@ -707,7 +655,6 @@ async def delete_account(
         db.commit()
         return {"message": "Account and all associated cameras deleted successfully"}
     finally: db.close()
-
 @app.post("/api/users/logout-all", status_code=status.HTTP_200_OK)
 async def logout_all_sessions(
     current_user: models.User = Depends(get_current_user_from_token)
@@ -721,14 +668,11 @@ async def logout_all_sessions(
         return {"message": "All other sessions have been logged out."}
     finally:
         db.close()
-
 @app.get("/api/webrtc-creds")
 async def get_webrtc_credentials(
     current_user: models.User = Depends(get_current_user_from_token)
 ):
     return {"user": "viewer", "pass": "secret"}
-
-# --- Session Management Endpoints ---
 @app.get("/api/sessions", response_model=List[UserSession])
 async def get_sessions(
     current_user: models.User = Depends(get_current_user_from_token)
@@ -739,7 +683,6 @@ async def get_sessions(
         return sessions
     finally:
         db.close()
-
 @app.delete("/api/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def logout_session(
     session_id: int,

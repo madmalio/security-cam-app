@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Camera } from "@/app/types";
+import { Camera, MotionType } from "@/app/types";
 import { toast } from "sonner";
 import {
   Loader,
@@ -11,17 +11,12 @@ import {
   X,
   Wifi,
   GripVertical,
-  Copy,
-  Check,
-} from "lucide-react";
+} from "lucide-react"; // <-- Removed extra icons
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import TestStreamModal from "./TestStreamModal";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useAuth } from "@/app/contexts/AuthContext";
-
-// --- 2. Get API_URL from environment ---
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 interface CameraEditRowProps {
   camera: Camera;
@@ -41,11 +36,13 @@ export default function CameraEditRow({
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
   const [testStreamPath, setTestStreamPath] = useState<string | null>(null);
 
+  // --- State for fields ---
   const [name, setName] = useState(camera.name);
   const [rtspUrl, setRtspUrl] = useState(camera.rtsp_url);
-
-  // --- 3. State for copy button ---
-  const [isCopied, setIsCopied] = useState(false);
+  const [rtspSubstreamUrl, setRtspSubstreamUrl] = useState(
+    camera.rtsp_substream_url || ""
+  );
+  // --- Removed motionType state ---
 
   const {
     attributes,
@@ -63,19 +60,22 @@ export default function CameraEditRow({
   };
 
   const handleTestConnection = async () => {
+    const urlToTest = isEditing ? rtspUrl : camera.rtsp_url;
+    if (!urlToTest) {
+      toast.error("Please enter an RTSP URL to test.");
+      return;
+    }
     setIsTesting(true);
     try {
       const response = await api("/api/cameras/test-connection", {
         method: "POST",
-        body: JSON.stringify({ rtsp_url: camera.rtsp_url }),
+        body: JSON.stringify({ rtsp_url: urlToTest }),
       });
       if (!response) return;
-
       if (!response.ok) {
         const err = await response.json();
         throw new Error(err.detail || "Failed to start test");
       }
-
       const data = await response.json();
       setTestStreamPath(data.path);
       setIsTestModalOpen(true);
@@ -89,9 +89,16 @@ export default function CameraEditRow({
   const handleSave = async () => {
     setIsSaving(true);
     try {
+      // --- Save only camera details ---
       const response = await api(`/api/cameras/${camera.id}`, {
         method: "PUT",
-        body: JSON.stringify({ name: name, rtsp_url: rtspUrl }),
+        body: JSON.stringify({
+          name: name,
+          rtsp_url: rtspUrl,
+          rtsp_substream_url: rtspSubstreamUrl || null,
+          motion_type: camera.motion_type, // Pass the original motion_type back
+          motion_roi: camera.motion_roi, // Pass the original roi back
+        }),
       });
       if (!response) return;
 
@@ -117,12 +124,10 @@ export default function CameraEditRow({
         method: "DELETE",
       });
       if (!response) return;
-
       if (!response.ok) {
         const err = await response.json();
         throw new Error(err.detail || "Failed to delete camera");
       }
-
       toast.success(`Deleted "${camera.name}"`);
       onUpdate();
       setIsConfirmOpen(false);
@@ -136,16 +141,8 @@ export default function CameraEditRow({
   const handleCancel = () => {
     setName(camera.name);
     setRtspUrl(camera.rtsp_url);
+    setRtspSubstreamUrl(camera.rtsp_substream_url || "");
     setIsEditing(false);
-  };
-
-  // --- 4. NEW: Handle copy to clipboard ---
-  const webhookUrl = `${API_URL}/api/webhook/motion/${camera.webhook_secret}`;
-  const handleCopy = () => {
-    navigator.clipboard.writeText(webhookUrl);
-    setIsCopied(true);
-    toast.success("Webhook URL copied to clipboard!");
-    setTimeout(() => setIsCopied(false), 2000);
   };
 
   if (isEditing) {
@@ -167,39 +164,63 @@ export default function CameraEditRow({
               Save changes to enable reordering
             </p>
           </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+
+          {/* --- Simplified Edit Form --- */}
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label
+                  htmlFor={`name-${camera.id}`}
+                  className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300"
+                >
+                  Camera Name
+                </label>
+                <input
+                  type="text"
+                  id={`name-${camera.id}`}
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full rounded-md border border-gray-300 p-2 text-gray-900 focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor={`url-${camera.id}`}
+                  className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300"
+                >
+                  RTSP URL (Main)
+                </label>
+                <input
+                  type="text"
+                  id={`url-${camera.id}`}
+                  value={rtspUrl}
+                  onChange={(e) => setRtspUrl(e.target.value)}
+                  className="w-full rounded-md border border-gray-300 p-2 text-gray-900 focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
+                />
+              </div>
+            </div>
+
             <div>
               <label
-                htmlFor={`name-${camera.id}`}
+                htmlFor={`substream-url-${camera.id}`}
                 className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300"
               >
-                Camera Name
+                RTSP URL (Substream)
+                <span className="text-xs text-gray-400"> (Optional)</span>
               </label>
               <input
                 type="text"
-                id={`name-${camera.id}`}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full rounded-md border border-gray-300 p-2 text-gray-900 focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
+                id={`substream-url-${camera.id}`}
+                value={rtspSubstreamUrl}
+                onChange={(e) => setRtspSubstreamUrl(e.target.value)}
+                placeholder="Low-res URL for fast motion detection"
+                className="w-full rounded-md border border-gray-300 p-2 text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white dark:placeholder:text-zinc-500"
               />
             </div>
-            <div>
-              <label
-                htmlFor={`url-${camera.id}`}
-                className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300"
-              >
-                RTSP URL
-              </label>
-              <input
-                type="text"
-                id={`url-${camera.id}`}
-                value={rtspUrl}
-                onChange={(e) => setRtspUrl(e.target.value)}
-                className="w-full rounded-md border border-gray-300 p-2 text-gray-900 focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
-              />
-            </div>
+            {/* --- Motion options are GONE --- */}
           </div>
-          <div className="mt-4 flex justify-end gap-3">
+
+          <div className="mt-6 flex justify-end gap-3">
             <button
               onClick={handleCancel}
               className="flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-600"
@@ -290,40 +311,7 @@ export default function CameraEditRow({
             </button>
           </div>
         </div>
-
-        {/* --- 5. NEW: Webhook URL Section --- */}
-        <div className="mt-4 border-t border-gray-200 pt-4 dark:border-zinc-700">
-          <label
-            htmlFor={`webhook-${camera.id}`}
-            className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300"
-          >
-            Motion Webhook URL
-          </label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              id={`webhook-${camera.id}`}
-              value={webhookUrl}
-              readOnly
-              className="w-full flex-1 rounded-md border border-gray-300 bg-gray-50 p-2 text-gray-600 focus:outline-none dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-300"
-            />
-            <button
-              onClick={handleCopy}
-              className={`flex w-12 items-center justify-center rounded-lg ${
-                isCopied
-                  ? "bg-green-600 text-white"
-                  : "bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-zinc-600 dark:text-zinc-200 dark:hover:bg-zinc-500"
-              }`}
-              title="Copy to clipboard"
-            >
-              {isCopied ? (
-                <Check className="h-5 w-5" />
-              ) : (
-                <Copy className="h-5 w-5" />
-              )}
-            </button>
-          </div>
-        </div>
+        {/* --- Webhook URL section is GONE --- */}
       </div>
       <ConfirmDeleteModal
         isOpen={isConfirmOpen}

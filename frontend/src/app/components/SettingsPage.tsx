@@ -1,14 +1,22 @@
 "use client";
 
 import React, { useState } from "react";
-import { User, Camera, Palette, ShieldCheck } from "lucide-react";
+// --- THIS IS THE FIX ---
+import { User, Camera, Palette, Scan, ShieldCheck } from "lucide-react";
+// -----------------------
 import ProfileSettings from "./ProfileSettings";
 import SecuritySettings from "./SecuritySettings";
 import CameraSettings from "./CameraSettings";
 import AppearanceSettings from "./AppearanceSettings";
+import MotionSettingsPage from "./MotionSettingsPage";
 import { Camera as CameraType } from "@/app/types";
 
-type SettingsSection = "profile" | "security" | "cameras" | "appearance";
+type SettingsSection =
+  | "profile"
+  | "security"
+  | "cameras"
+  | "appearance"
+  | "motion";
 
 interface SettingsPageProps {
   cameras: CameraType[];
@@ -52,6 +60,7 @@ export default function SettingsPage({
         <NavItem label="Security" icon={ShieldCheck} section="security" />
         <NavItem label="Cameras" icon={Camera} section="cameras" />
         <NavItem label="Appearance" icon={Palette} section="appearance" />
+        <NavItem label="Motion" icon={Scan} section="motion" />
       </nav>
 
       {/* Right Content */}
@@ -62,6 +71,12 @@ export default function SettingsPage({
           <CameraSettings cameras={cameras} onCamerasUpdate={onCamerasUpdate} />
         )}
         {currentSection === "appearance" && <AppearanceSettings />}
+        {currentSection === "motion" && (
+          <MotionSettingsPage
+            cameras={cameras}
+            onCamerasUpdate={onCamerasUpdate}
+          />
+        )}
       </div>
     </div>
   );

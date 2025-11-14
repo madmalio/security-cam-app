@@ -1,0 +1,4 @@
+opencv-python
+httpx
+SQLAlchemy
+psycopg2-binary

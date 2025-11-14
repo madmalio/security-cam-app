@@ -21,16 +21,19 @@ export default function TestStreamModal({
 
   useEffect(() => {
     if (isOpen && testStreamPath) {
+      // Create a temporary "Camera" object for the LiveCameraView component
       setTestCamera({
-        id: 9999,
+        id: 9999, // Fake ID
         name: "Test Stream",
         path: testStreamPath,
-        rtsp_url: "",
+        rtsp_url: "", // Not needed by the player
         display_order: 0,
-        webhook_secret: "test-secret", // <-- FIX: Added dummy secret
+        motion_type: "off",
+        rtsp_substream_url: null,
+        motion_roi: null, // <-- THIS IS THE FIX
       });
     } else {
-      setTestCamera(null);
+      setTestCamera(null); // Clear camera when modal closes
     }
   }, [isOpen, testStreamPath]);
 
@@ -80,6 +83,7 @@ export default function TestStreamModal({
                     your RTSP URL and credentials.
                   </p>
 
+                  {/* Render the player only when the camera object is set */}
                   {testCamera && (
                     <LiveCameraView camera={testCamera} isMuted={false} />
                   )}

@@ -1,10 +1,14 @@
+export type MotionType = "off" | "webhook" | "active";
+
 export interface Camera {
   id: number;
   name: string;
   path: string;
   rtsp_url: string;
+  rtsp_substream_url: string | null;
   display_order: number;
-  webhook_secret: string;
+  motion_type: MotionType;
+  motion_roi: string | null;
 }
 
 export interface User {
