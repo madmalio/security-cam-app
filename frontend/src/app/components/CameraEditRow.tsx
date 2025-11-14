@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Camera, MotionType } from "@/app/types";
+import { Camera } from "@/app/types";
 import { toast } from "sonner";
 import {
   Loader,
@@ -11,7 +11,7 @@ import {
   X,
   Wifi,
   GripVertical,
-} from "lucide-react"; // <-- Removed extra icons
+} from "lucide-react";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import TestStreamModal from "./TestStreamModal";
 import { useSortable } from "@dnd-kit/sortable";
@@ -39,10 +39,7 @@ export default function CameraEditRow({
   // --- State for fields ---
   const [name, setName] = useState(camera.name);
   const [rtspUrl, setRtspUrl] = useState(camera.rtsp_url);
-  const [rtspSubstreamUrl, setRtspSubstreamUrl] = useState(
-    camera.rtsp_substream_url || ""
-  );
-  // --- Removed motionType state ---
+  // --- Removed rtspSubstreamUrl state ---
 
   const {
     attributes,
@@ -89,15 +86,12 @@ export default function CameraEditRow({
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      // --- Save only camera details ---
+      // --- FIX: Only save fields from this page ---
       const response = await api(`/api/cameras/${camera.id}`, {
-        method: "PUT",
+        method: "PATCH", // <-- Use PATCH for partial updates
         body: JSON.stringify({
           name: name,
           rtsp_url: rtspUrl,
-          rtsp_substream_url: rtspSubstreamUrl || null,
-          motion_type: camera.motion_type, // Pass the original motion_type back
-          motion_roi: camera.motion_roi, // Pass the original roi back
         }),
       });
       if (!response) return;
@@ -108,7 +102,7 @@ export default function CameraEditRow({
       }
 
       toast.success(`Updated "${name}" successfully!`);
-      onUpdate();
+      onUpdate(); // Re-fetches all cameras
       setIsEditing(false);
     } catch (err: any) {
       toast.error(err.message);
@@ -141,7 +135,6 @@ export default function CameraEditRow({
   const handleCancel = () => {
     setName(camera.name);
     setRtspUrl(camera.rtsp_url);
-    setRtspSubstreamUrl(camera.rtsp_substream_url || "");
     setIsEditing(false);
   };
 
@@ -165,7 +158,6 @@ export default function CameraEditRow({
             </p>
           </div>
 
-          {/* --- Simplified Edit Form --- */}
           <div className="space-y-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
@@ -199,25 +191,7 @@ export default function CameraEditRow({
                 />
               </div>
             </div>
-
-            <div>
-              <label
-                htmlFor={`substream-url-${camera.id}`}
-                className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300"
-              >
-                RTSP URL (Substream)
-                <span className="text-xs text-gray-400"> (Optional)</span>
-              </label>
-              <input
-                type="text"
-                id={`substream-url-${camera.id}`}
-                value={rtspSubstreamUrl}
-                onChange={(e) => setRtspSubstreamUrl(e.target.value)}
-                placeholder="Low-res URL for fast motion detection"
-                className="w-full rounded-md border border-gray-300 p-2 text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white dark:placeholder:text-zinc-500"
-              />
-            </div>
-            {/* --- Motion options are GONE --- */}
+            {/* --- Substream URL input is REMOVED --- */}
           </div>
 
           <div className="mt-6 flex justify-end gap-3">
@@ -311,7 +285,7 @@ export default function CameraEditRow({
             </button>
           </div>
         </div>
-        {/* --- Webhook URL section is GONE --- */}
+        {/* --- All motion-related UI is GONE --- */}
       </div>
       <ConfirmDeleteModal
         isOpen={isConfirmOpen}

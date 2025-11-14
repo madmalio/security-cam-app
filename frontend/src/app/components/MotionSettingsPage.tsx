@@ -38,15 +38,22 @@ export default function MotionSettingsPage({
     [cameras, selectedCameraId]
   );
 
+  // --- Local state for the settings ---
   const [motionType, setMotionType] = useState<MotionType>(
     selectedCamera?.motion_type || "off"
   );
   const [motionRoi, setMotionRoi] = useState(selectedCamera?.motion_roi || "");
+  // --- 1. ADD state for substream URL ---
+  const [rtspSubstreamUrl, setRtspSubstreamUrl] = useState(
+    selectedCamera?.rtsp_substream_url || ""
+  );
 
+  // Update local state when the camera selection changes
   React.useEffect(() => {
     if (selectedCamera) {
       setMotionType(selectedCamera.motion_type);
       setMotionRoi(selectedCamera.motion_roi || "");
+      setRtspSubstreamUrl(selectedCamera.rtsp_substream_url || "");
     }
   }, [selectedCamera]);
 
@@ -55,14 +62,13 @@ export default function MotionSettingsPage({
 
     setIsSaving(true);
     try {
+      // --- 2. Save ONLY motion-related fields using PATCH ---
       const response = await api(`/api/cameras/${selectedCamera.id}`, {
-        method: "PUT",
+        method: "PATCH",
         body: JSON.stringify({
-          name: selectedCamera.name,
-          rtsp_url: selectedCamera.rtsp_url,
-          rtsp_substream_url: selectedCamera.rtsp_substream_url,
           motion_type: motionType,
           motion_roi: motionRoi,
+          rtsp_substream_url: rtspSubstreamUrl || null,
         }),
       });
       if (!response) return;
@@ -73,7 +79,7 @@ export default function MotionSettingsPage({
       }
 
       toast.success("Motion settings saved!");
-      onCamerasUpdate();
+      onCamerasUpdate(); // Re-fetch cameras to get updated data
     } catch (err: any) {
       toast.error(err.message);
     } finally {
@@ -93,7 +99,6 @@ export default function MotionSettingsPage({
   };
 
   return (
-    // --- FIX: Use a single-column (vertical) layout ---
     <div className="space-y-8 max-w-4xl pb-16">
       <div className="mb-8">
         <h1 className="text-3xl font-semibold text-gray-900 dark:text-white">
@@ -104,8 +109,8 @@ export default function MotionSettingsPage({
         </p>
       </div>
 
-      {/* Camera Selector - now full width */}
-      <div className="space-y-5">
+      {/* --- 3. FIX: Removed max-w-md to fix "squished" dropdown --- */}
+      <div className="space-y-2">
         <label
           htmlFor="camera-select"
           className="block text-sm font-medium text-gray-700 dark:text-zinc-300"
@@ -116,7 +121,7 @@ export default function MotionSettingsPage({
           id="camera-select"
           value={selectedCameraId || ""}
           onChange={(e) => setSelectedCameraId(Number(e.target.value))}
-          className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
+          className="block w-full p-2 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
         >
           {cameras.map((cam) => (
             <option key={cam.id} value={cam.id}>
@@ -131,7 +136,6 @@ export default function MotionSettingsPage({
           Please add a camera to configure motion detection.
         </p>
       ) : (
-        // --- FIX: Removed grid-cols-2, now a simple vertical stack ---
         <div className="space-y-8">
           {/* Section 1: Settings */}
           <div className="space-y-6">
@@ -166,6 +170,31 @@ export default function MotionSettingsPage({
                 />
               </div>
             </div>
+
+            {/* --- 4. Substream URL, moved here and conditional --- */}
+            {motionType === "active" && (
+              <div>
+                <label
+                  htmlFor="substream-url"
+                  className="block text-sm font-medium text-gray-700 dark:text-zinc-300"
+                >
+                  RTSP URL (Substream)
+                  <span className="text-xs text-gray-400"> (Optional)</span>
+                </label>
+                <input
+                  type="text"
+                  id="substream-url"
+                  value={rtspSubstreamUrl}
+                  onChange={(e) => setRtspSubstreamUrl(e.target.value)}
+                  placeholder="Low-res URL for fast motion detection"
+                  className="mt-1 w-full rounded-md border border-gray-300 p-2 text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white dark:placeholder:text-zinc-500"
+                />
+                <p className="mt-1 text-sm text-gray-500 dark:text-zinc-400">
+                  Providing a substream (e.g., 640x360) will significantly
+                  reduce server CPU usage.
+                </p>
+              </div>
+            )}
 
             {motionType === "webhook" && (
               <div>
@@ -214,7 +243,7 @@ export default function MotionSettingsPage({
                 <MotionGrid
                   roi={motionRoi}
                   onChange={setMotionRoi}
-                  disabled={false} // No longer needs to be disabled
+                  disabled={false}
                 />
               </div>
             </div>

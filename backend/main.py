@@ -48,7 +48,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"], # Allow PATCH
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -67,15 +67,16 @@ class Camera(CameraBase):
     rtsp_substream_url: Optional[str] = None
     display_order: int
     motion_type: str
-    motion_roi: Optional[str] = None # <-- ADD THIS
+    motion_roi: Optional[str] = None
     class Config: from_attributes = True 
 
+# --- FIX: All fields are now Optional for partial updates ---
 class CameraUpdate(BaseModel):
-    name: str
-    rtsp_url: str
+    name: Optional[str] = None
+    rtsp_url: Optional[str] = None
     rtsp_substream_url: Optional[str] = None
-    motion_type: str
-    motion_roi: Optional[str] = None # <-- ADD THIS
+    motion_type: Optional[str] = None
+    motion_roi: Optional[str] = None
 
 class TestCameraRequest(BaseModel):
     rtsp_url: str
@@ -411,10 +412,11 @@ async def create_camera_for_user(
         return db_camera
     finally: db.close()
 
-@app.put("/api/cameras/{camera_id}", response_model=Camera)
+# --- FIX: Changed to PATCH and updated logic ---
+@app.patch("/api/cameras/{camera_id}", response_model=Camera)
 async def update_camera(
     camera_id: int, 
-    camera_update: CameraUpdate,
+    camera_update: CameraUpdate, # <-- Updated schema with Optional fields
     current_user: models.User = Depends(get_current_user_from_token)
 ):
     db = SessionLocal()
@@ -423,45 +425,50 @@ async def update_camera(
         if not db_camera: raise HTTPException(status_code=404, detail="Camera not found")
         
         old_path = db_camera.path
-        new_name_changed = db_camera.name != camera_update.name
-        db_camera.name = camera_update.name
-        db_camera.rtsp_url = camera_update.rtsp_url
-        db_camera.rtsp_substream_url = camera_update.rtsp_substream_url
-        db_camera.motion_type = camera_update.motion_type
-        db_camera.motion_roi = camera_update.motion_roi # <-- SAVE ROI
-        auth = ("admin", "mysecretpassword")
+        new_name_changed = False
         
-        path_config = {
-            "source": camera_update.rtsp_url,
-            "sourceOnDemand": True,
-        }
+        # --- FIX: Only update fields that were sent ---
+        update_data = camera_update.model_dump(exclude_unset=True)
         
-        async with httpx.AsyncClient() as client:
-            if new_name_changed:
-                safe_name = re.sub(r'[^a-zA-Z0-9_-]', '', camera_update.name.lower().replace(" ", "_"))
-                new_path = f"user_{current_user.id}_{safe_name}"
-                existing = db.query(models.Camera).filter(models.Camera.path == new_path).first()
-                if existing:
-                    new_path = f"{new_path}_{str(uuid.uuid4())[:4]}"
-                
-                db_camera.path = new_path
-                
-                log.info(f"--- UPDATING: Deleting old path {old_path} ---")
-                old_mediamtx_url = f"http://mediamtx:9997/v3/config/paths/delete/{old_path}"
-                try:
-                    await client.delete(old_mediamtx_url, auth=auth)
-                except httpx.HTTPStatusError as e:
-                     if e.response.status_code != 404: raise
-                
-                log.info(f"--- UPDATING: Adding new path {new_path} ---")
-                new_mediamtx_url = f"http://mediamtx:9997/v3/config/paths/add/{new_path}"
-                response = await client.post(new_mediamtx_url, auth=auth, json=path_config)
-                response.raise_for_status()
-            else:
-                log.info(f"--- UPDATING: Patching existing path {old_path} ---")
-                mediamtx_url = f"http://mediamtx:9997/v3/config/paths/patch/{old_path}"
-                response = await client.patch(mediamtx_url, auth=auth, json=path_config)
-                response.raise_for_status()
+        for key, value in update_data.items():
+            setattr(db_camera, key, value)
+            if key == "name" and value != old_path:
+                new_name_changed = True
+        
+        # We only need to talk to mediamtx if the name or URL changed
+        if camera_update.name or camera_update.rtsp_url:
+            auth = ("admin", "mysecretpassword")
+            path_config = {
+                "source": db_camera.rtsp_url, # Use the (potentially updated) URL
+                "sourceOnDemand": True,
+            }
+            
+            async with httpx.AsyncClient() as client:
+                if new_name_changed:
+                    safe_name = re.sub(r'[^a-zA-Z0-9_-]', '', db_camera.name.lower().replace(" ", "_"))
+                    new_path = f"user_{current_user.id}_{safe_name}"
+                    existing = db.query(models.Camera).filter(models.Camera.path == new_path).first()
+                    if existing:
+                        new_path = f"{new_path}_{str(uuid.uuid4())[:4]}"
+                    db_camera.path = new_path
+                    
+                    log.info(f"--- UPDATING: Deleting old path {old_path} ---")
+                    old_mediamtx_url = f"http://mediamtx:9997/v3/config/paths/delete/{old_path}"
+                    try:
+                        await client.delete(old_mediamtx_url, auth=auth)
+                    except httpx.HTTPStatusError as e:
+                         if e.response.status_code != 404: raise
+                    
+                    log.info(f"--- UPDATING: Adding new path {new_path} ---")
+                    new_mediamtx_url = f"http://mediamtx:9997/v3/config/paths/add/{new_path}"
+                    response = await client.post(new_mediamtx_url, auth=auth, json=path_config)
+                    response.raise_for_status()
+                else:
+                    log.info(f"--- UPDATING: Patching existing path {old_path} ---")
+                    mediamtx_url = f"http://mediamtx:9997/v3/config/paths/patch/{old_path}"
+                    response = await client.patch(mediamtx_url, auth=auth, json=path_config)
+                    response.raise_for_status()
+
         db.commit()
         db.refresh(db_camera)
         return db_camera
