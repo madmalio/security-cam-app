@@ -47,7 +47,7 @@ export default function MotionGrid({
       className={`absolute inset-0 grid grid-cols-10 grid-rows-10 ${
         disabled ? "cursor-not-allowed bg-black/30" : "cursor-pointer"
       } 
-      `} // <-- FIX: Removed backdrop-blur-sm
+      `}
       title={
         disabled
           ? 'Enable "In-App" detection to edit this grid'
@@ -61,9 +61,7 @@ export default function MotionGrid({
             key={index}
             onClick={() => toggleCell(index)}
             className={`border-[0.5px] border-white/20 transition-colors ${
-              isSelected
-                ? "bg-blue-500/40" // <-- FIX: Changed from 70% to 40%
-                : "bg-transparent hover:bg-white/20"
+              isSelected ? "bg-blue-500/40" : "bg-transparent hover:bg-white/20"
             }`}
           />
         );

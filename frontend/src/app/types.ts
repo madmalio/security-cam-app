@@ -32,6 +32,7 @@ export interface Event {
   end_time: string | null;
   reason: string;
   video_path: string;
+  thumbnail_path: string | null;
   camera_id: number;
   user_id: number;
   camera: Camera;

@@ -38,27 +38,22 @@ app.mount("/recordings", StaticFiles(directory="/recordings"), name="recordings"
 # ====================================================================
 #                 CORS Middleware & Pydantic Schemas
 # ====================================================================
-
 origins = [
     "http://localhost:3000",
     "http://localhost:3001",
 ]
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"], # Allow PATCH
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
     allow_headers=["Authorization", "Content-Type"],
 )
-
-# --- Schemas ---
 class CameraBase(BaseModel): name: str
 class CameraCreate(BaseModel): 
     name: str
     rtsp_url: str
     rtsp_substream_url: Optional[str] = None
-
 class Camera(CameraBase):
     id: int
     owner_id: int
@@ -69,20 +64,16 @@ class Camera(CameraBase):
     motion_type: str
     motion_roi: Optional[str] = None
     class Config: from_attributes = True 
-
-# --- FIX: All fields are now Optional for partial updates ---
 class CameraUpdate(BaseModel):
     name: Optional[str] = None
     rtsp_url: Optional[str] = None
     rtsp_substream_url: Optional[str] = None
     motion_type: Optional[str] = None
     motion_roi: Optional[str] = None
-
 class TestCameraRequest(BaseModel):
     rtsp_url: str
 class ReorderRequest(BaseModel):
     camera_ids: List[int]
-    
 class UserBase(BaseModel):
     email: str
     display_name: Optional[str] = None
@@ -93,7 +84,6 @@ class UserCreate(UserBase):
         if len(v.encode('utf-8')) > 72:
             raise ValueError('Password is too long (max 72 bytes)')
         return v
-        
 class UserSession(BaseModel):
     id: int
     jti: str
@@ -101,24 +91,19 @@ class UserSession(BaseModel):
     ip_address: Optional[str]
     created_at: datetime
     class Config: from_attributes = True
-        
 class User(UserBase):
     id: int
     cameras: List[Camera] = []
     gravatar_hash: Optional[str] = None
     class Config: from_attributes = True 
-
 class UserUpdate(BaseModel):
     display_name: Optional[str] = None
-
 class Token(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str
-
 class TokenData(BaseModel):
     email: str | None = None
-    
 class PasswordChange(BaseModel):
     current_password: str
     new_password: str = Field(..., min_length=8)
@@ -127,64 +112,81 @@ class PasswordChange(BaseModel):
         if len(v.encode('utf-8')) > 72:
             raise ValueError('Password is too long (max 72 bytes)')
         return v
-
 class Event(BaseModel):
     id: int
     start_time: datetime
     end_time: Optional[datetime] = None
     reason: str
     video_path: str
+    thumbnail_path: Optional[str] = None
     camera_id: int
     user_id: int
     camera: CameraBase
     class Config: from_attributes = True
-        
+
 # ====================================================================
-#                     Startup Event
+#                 Helper Functions (REVERTED)
+# ====================================================================
+
+async def configure_mediamtx_path(camera_path: str, rtsp_url: str):
+    """Adds or updates a camera path in mediamtx."""
+    auth = ("admin", "mysecretpassword")
+    path_config = {
+        "source": rtsp_url,
+        "sourceOnDemand": True,
+    }
+
+    async with httpx.AsyncClient() as client:
+        # Use PATCH first (like in the original startup)
+        patch_url = f"http://mediamtx:9997/v3/config/paths/patch/{camera_path}"
+        try:
+            response = await client.patch(patch_url, auth=auth, json=path_config)
+            if response.status_code == 404:
+                # Path doesn't exist, so create it
+                log.warning(f"--- Path {camera_path} not found, creating... ---")
+                add_url = f"http://mediamtx:9997/v3/config/paths/add/{camera_path}"
+                add_response = await client.post(add_url, auth=auth, json=path_config)
+                add_response.raise_for_status()
+            else:
+                response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            log.error(f"--- mediamtx API error: {e.response.text} ---")
+            raise
+        except httpx.RequestError as e:
+            log.error(f"--- Cannot contact mediamtx: {e} ---")
+            raise
+
+# ====================================================================
+#                     Startup Event (REVERTED)
 # ====================================================================
 @app.on_event("startup")
 async def on_startup():
     log.info("--- STARTUP: Re-populating mediamtx ---")
     db = SessionLocal()
-    all_cameras = db.query(models.Camera).all()
-    if not all_cameras:
-        log.info("--- STARTUP: No cameras in database. Skipping. ---")
-        db.close()
-        return
-    auth = ("admin", "mysecretpassword")
-    async with httpx.AsyncClient() as client:
+    try:
+        all_cameras = db.query(models.Camera).all()
+        if not all_cameras:
+            log.info("--- STARTUP: No cameras in database. Skipping. ---")
+            return
+        
         for camera in all_cameras:
             if not camera.rtsp_url:
-                log.warning(f"--- STARTUP: Skipping camera {camera.path} (no RTSP URL saved) ---")
+                log.warning(f"--- STARTUP: Skipping camera {camera.path} (no URL) ---")
                 continue
             log.info(f"--- STARTUP: Updating camera {camera.path} ---")
+            # --- REVERTED to simple config ---
+            await configure_mediamtx_path(camera.path, camera.rtsp_url) 
             
-            path_config = {
-                "source": camera.rtsp_url,
-                "sourceOnDemand": True,
-            }
-            
-            mediamtx_url = f"http://mediamtx:9997/v3/config/paths/patch/{camera.path}"
-            try:
-                response = await client.patch(mediamtx_url, auth=auth, json=path_config)
-                response.raise_for_status()
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 404:
-                    log.warning(f"--- STARTUP: Path {camera.path} not found, creating it... ---")
-                    add_url = f"http://mediamtx:9997/v3/config/paths/add/{camera.path}"
-                    try:
-                        add_response = await client.post(add_url, auth=auth, json=path_config)
-                        add_response.raise_for_status()
-                    except httpx.HTTPStatusError as add_e: log.error(f"--- STARTUP: Failed to create path {camera.path}: {add_e} ---")
-                else: log.warning(f"--- STARTUP: Failed to update camera {camera.path}: {e} ---")
-            except httpx.RequestError as e: log.error(f"--- STARTUP: Could not contact mediamtx: {e} ---")
-    db.close()
+    except Exception as e:
+        log.error(f"--- STARTUP: Failed to configure mediamtx: {e} ---")
+    finally:
+        db.close()
     log.info("--- STARTUP: mediamtx re-population complete. ---")
+
 
 # ====================================================================
 #                 Security & Auth
 # ====================================================================
-# ... (unchanged) ...
 def get_secret_key():
     try:
         with open("/run/secrets/jwt_secret_key", "r") as f:
@@ -210,7 +212,6 @@ def create_access_token(data: dict, expires_delta: timedelta):
 # ====================================================================
 #                 DB Functions
 # ====================================================================
-# ... (unchanged) ...
 def get_user_by_email(db: Session, email: str):
     return db.query(models.User).options(joinedload(models.User.cameras)).filter(models.User.email == email).first()
 def get_gravatar_hash(email: str) -> str:
@@ -235,7 +236,6 @@ def get_cameras_by_user(db: Session, user_id: int):
 # ====================================================================
 #                 Auth Dependency
 # ====================================================================
-# ... (unchanged) ...
 async def get_current_user_from_token(token: str | None = Depends(oauth2_scheme)) -> models.User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -271,7 +271,6 @@ async def get_current_user_from_token(token: str | None = Depends(oauth2_scheme)
 # ====================================================================
 #                 API Endpoints
 # ====================================================================
-# ... ( / , /register, /token, /token/refresh, /users/me are unchanged) ...
 @app.get("/")
 def read_root(): return {"message": "Security Camera API is running!"}
 @app.post("/register", response_model=User)
@@ -382,20 +381,8 @@ async def create_camera_for_user(
         existing = db.query(models.Camera).filter(models.Camera.path == path_name).first()
         if existing: 
              path_name = f"{path_name}_{str(uuid.uuid4())[:4]}"
-
-        path_config = {
-            "source": camera.rtsp_url,
-            "sourceOnDemand": True,
-        }
         
-        mediamtx_url = f"http://mediamtx:9997/v3/config/paths/add/{path_name}"
-        try:
-            auth = ("admin", "mysecretpassword")
-            async with httpx.AsyncClient() as client:
-                response = await client.post(mediamtx_url, auth=auth, json=path_config)
-            response.raise_for_status()
-        except httpx.RequestError as e: raise HTTPException(status_code=500, detail=f"Failed to contact mediamtx: {e}")
-        except httpx.HTTPStatusError as e: raise HTTPException(status_code=e.response.status_code, detail=f"mediamtx error: {e.response.text}")
+        await configure_mediamtx_path(path_name, camera.rtsp_url)
         
         db_camera = models.Camera(
             name=camera.name, 
@@ -410,13 +397,16 @@ async def create_camera_for_user(
         db.commit()
         db.refresh(db_camera)
         return db_camera
+    except Exception as e:
+        db.rollback()
+        log.error(f"--- Error creating camera: {e} ---")
+        raise HTTPException(status_code=500, detail="Failed to create camera in mediamtx")
     finally: db.close()
 
-# --- FIX: Changed to PATCH and updated logic ---
 @app.patch("/api/cameras/{camera_id}", response_model=Camera)
 async def update_camera(
     camera_id: int, 
-    camera_update: CameraUpdate, # <-- Updated schema with Optional fields
+    camera_update: CameraUpdate, 
     current_user: models.User = Depends(get_current_user_from_token)
 ):
     db = SessionLocal()
@@ -424,60 +414,17 @@ async def update_camera(
         db_camera = db.query(models.Camera).filter(models.Camera.id == camera_id, models.Camera.owner_id == current_user.id).first()
         if not db_camera: raise HTTPException(status_code=404, detail="Camera not found")
         
-        old_path = db_camera.path
-        new_name_changed = False
-        
-        # --- FIX: Only update fields that were sent ---
         update_data = camera_update.model_dump(exclude_unset=True)
         
         for key, value in update_data.items():
             setattr(db_camera, key, value)
-            if key == "name" and value != old_path:
-                new_name_changed = True
         
-        # We only need to talk to mediamtx if the name or URL changed
-        if camera_update.name or camera_update.rtsp_url:
-            auth = ("admin", "mysecretpassword")
-            path_config = {
-                "source": db_camera.rtsp_url, # Use the (potentially updated) URL
-                "sourceOnDemand": True,
-            }
-            
-            async with httpx.AsyncClient() as client:
-                if new_name_changed:
-                    safe_name = re.sub(r'[^a-zA-Z0-9_-]', '', db_camera.name.lower().replace(" ", "_"))
-                    new_path = f"user_{current_user.id}_{safe_name}"
-                    existing = db.query(models.Camera).filter(models.Camera.path == new_path).first()
-                    if existing:
-                        new_path = f"{new_path}_{str(uuid.uuid4())[:4]}"
-                    db_camera.path = new_path
-                    
-                    log.info(f"--- UPDATING: Deleting old path {old_path} ---")
-                    old_mediamtx_url = f"http://mediamtx:9997/v3/config/paths/delete/{old_path}"
-                    try:
-                        await client.delete(old_mediamtx_url, auth=auth)
-                    except httpx.HTTPStatusError as e:
-                         if e.response.status_code != 404: raise
-                    
-                    log.info(f"--- UPDATING: Adding new path {new_path} ---")
-                    new_mediamtx_url = f"http://mediamtx:9997/v3/config/paths/add/{new_path}"
-                    response = await client.post(new_mediamtx_url, auth=auth, json=path_config)
-                    response.raise_for_status()
-                else:
-                    log.info(f"--- UPDATING: Patching existing path {old_path} ---")
-                    mediamtx_url = f"http://mediamtx:9997/v3/config/paths/patch/{old_path}"
-                    response = await client.patch(mediamtx_url, auth=auth, json=path_config)
-                    response.raise_for_status()
+        if 'rtsp_url' in update_data:
+            await configure_mediamtx_path(db_camera.path, db_camera.rtsp_url)
 
         db.commit()
         db.refresh(db_camera)
         return db_camera
-    except httpx.RequestError as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to contact mediamtx: {e}")
-    except httpx.HTTPStatusError as e:
-        db.rollback()
-        raise HTTPException(status_code=e.response.status_code, detail=f"mediamtx error: {e.response.text}")
     except Exception as e:
         db.rollback()
         log.error(f"--- Error updating camera: {e} ---")
@@ -485,7 +432,6 @@ async def update_camera(
     finally:
         db.close()
 
-# ... (rest of endpoints are unchanged) ...
 @app.delete("/api/cameras/{camera_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_camera(
     camera_id: int, 
@@ -501,11 +447,9 @@ async def delete_camera(
             auth = ("admin", "mysecretpassword")
             async with httpx.AsyncClient() as client:
                 response = await client.delete(mediamtx_url, auth=auth)
-                log.info(f"--- DELETING CAMERA: Response status code {response.status_code} ---")
             if response.status_code != 404: response.raise_for_status()
-        except httpx.RequestError as e: raise HTTPException(status_code=500, detail=f"Failed to contact mediamtx: {e}")
-        except httpx.HTTPStatusError as e: raise HTTPException(status_code=e.response.status_code, detail=f"mediamtx error: {e.response.text}")
-        except Exception as e: log.error(f"--- DELETING CAMERA: Failed to delete path {mediamtx_url}: {e} ---")
+        except Exception as e: 
+            log.error(f"--- DELETING CAMERA: Failed to delete path {mediamtx_url}: {e} ---")
         
         db.delete(db_camera)
         db.commit()
@@ -539,11 +483,12 @@ async def test_camera_connection(
 ):
     temp_path = f"test_{uuid.uuid4()}"
     log.info(f"--- Creating temp test path {temp_path} ---")
-    mediamtx_url = f"http://mediamtx:9997/v3/config/paths/add/{temp_path}"
     auth = ("admin", "mysecretpassword")
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(mediamtx_url, auth=auth, json={"source": req.rtsp_url, "sourceOnDemand": True})
+            add_url = f"http://mediamtx:9997/v3/config/paths/add/{temp_path}"
+            path_config = {"source": req.rtsp_url, "sourceOnDemand": True}
+            response = await client.post(add_url, auth=auth, json=path_config)
         response.raise_for_status()
         background_tasks.add_task(delete_temp_path, temp_path)
         return {"path": temp_path}
@@ -563,12 +508,14 @@ async def delete_temp_path(path: str):
             await client.delete(mediamtx_url, auth=auth)
     except Exception as e:
         log.error(f"--- Failed to delete temp path {path}: {e} ---")
+
+# --- Event / Webhook Endpoints ---
 @app.post("/api/webhook/motion/{camera_path}")
-async def webhook_motion(
+async def webhook_motion_legacy(
     camera_path: str,
     db: Session = Depends(get_db)
 ):
-    log.info(f"--- Motion webhook triggered for path {camera_path} ---")
+    log.info(f"--- LEGACY motion webhook triggered for path {camera_path} ---")
     
     camera = db.query(models.Camera).filter(models.Camera.path == camera_path).first()
     if not camera:
@@ -580,21 +527,22 @@ async def webhook_motion(
         return {"message": "Webhook ignored. Camera not in webhook mode."}
 
     now = datetime.now(timezone.utc)
-    video_db_path = f"webhook-event-{now.strftime('%Y%m%d-%H%M%S')}.mp4"
+    video_db_path = f"webhook-event-{now.strftime('%Y%m%d-%H%M%S')}" 
     
     db_event = models.Event(
         start_time=now,
+        end_time=now, 
         reason="motion (webhook)",
-        video_path=video_db_path,
+        video_path=video_db_path, 
         camera_id=camera.id,
         user_id=camera.owner_id
     )
     db.add(db_event)
     db.commit()
-    db.refresh(db_event)
     
     log.info(f"--- Created Event {db_event.id} for camera {camera.name} ---")
     return {"message": "Event logged"}
+
 @app.get("/api/events", response_model=List[Event])
 async def get_events(
     current_user: models.User = Depends(get_current_user_from_token),
@@ -609,6 +557,50 @@ async def get_events(
         .all()
     )
     return events
+
+@app.delete("/api/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_event(
+    event_id: int,
+    current_user: models.User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db)
+):
+    event = db.query(models.Event).filter(
+        models.Event.id == event_id,
+        models.Event.user_id == current_user.id
+    ).first()
+    
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    
+    video_path = event.video_path
+    thumb_path = event.thumbnail_path
+    
+    try:
+        db.delete(event)
+        db.commit()
+        
+        abs_video_path = f"/{video_path}" 
+        if os.path.exists(abs_video_path):
+            os.remove(abs_video_path)
+            log.info(f"--- Deleted video file: {abs_video_path} ---")
+        else:
+            log.warning(f"--- Video file not found: {abs_video_path} ---")
+            
+        if thumb_path:
+            abs_thumb_path = f"/{thumb_path}"
+            if os.path.exists(abs_thumb_path):
+                os.remove(abs_thumb_path)
+                log.info(f"--- Deleted thumbnail file: {abs_thumb_path} ---")
+            else:
+                log.warning(f"--- Thumbnail file not found: {abs_thumb_path} ---")
+        return
+    
+    except Exception as e:
+        db.rollback()
+        log.error(f"--- Error deleting event {event_id}: {e} ---")
+        raise HTTPException(status_code=500, detail="Failed to delete event")
+
+# --- User/Session Endpoints ---
 @app.put("/api/users/me", response_model=User)
 async def update_user_me(
     user_update: UserUpdate, 
@@ -653,12 +645,10 @@ async def delete_account(
                 mediamtx_url = f"http://mediamtx:9997/v3/config/paths/delete/{camera.path}"
                 log.info(f"--- Queuing delete for camera: {camera.path} ---")
                 tasks.append(client.delete(mediamtx_url, auth=auth))
-                db.delete(camera)
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
         
-        db.query(models.UserSession).filter(models.UserSession.user_id == user.id).delete()
-        db.delete(user)
+        db.delete(user) 
         db.commit()
         return {"message": "Account and all associated cameras deleted successfully"}
     finally: db.close()

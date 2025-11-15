@@ -16,7 +16,7 @@ import {
   ChevronDown,
   Settings,
   ArrowLeft,
-  Film, // <-- 1. IMPORT
+  Film,
 } from "lucide-react";
 import { Menu as HeadlessMenu, Transition } from "@headlessui/react";
 import { useSettings } from "@/app/contexts/SettingsContext";
@@ -30,7 +30,17 @@ import FullscreenGridView from "./FullscreenGridView";
 import AddCameraModal from "./AddCameraModal";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import SettingsPage from "./SettingsPage";
-import EventsPage from "./EventsPage"; // <-- 2. IMPORT
+import EventsPage from "./EventsPage";
+
+type CurrentView = "dashboard" | "settings" | "events";
+
+const getInitialViewFromHash = (): CurrentView => {
+  if (typeof window === "undefined") return "dashboard";
+  const hash = window.location.hash; // e.g., "#events"
+  if (hash === "#events") return "events";
+  if (hash === "#settings") return "settings";
+  return "dashboard"; // Default
+};
 
 export default function DashboardPage() {
   const { user, logout, api } = useAuth();
@@ -43,10 +53,9 @@ export default function DashboardPage() {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [cameraToDelete, setCameraToDelete] = useState<Camera | null>(null);
 
-  // --- 3. UPDATED currentView state ---
-  const [currentView, setCurrentView] = useState<
-    "dashboard" | "settings" | "events" // <-- Added 'events'
-  >("dashboard");
+  const [currentView, setCurrentView] = useState<CurrentView>(
+    getInitialViewFromHash
+  );
 
   const { defaultView, gridColumns } = useSettings();
 
@@ -61,9 +70,24 @@ export default function DashboardPage() {
   const [isGridFullscreen, setIsGridFullscreen] = useState(false);
 
   useEffect(() => {
-    setViewMode(defaultView);
-    setLastMultiView(defaultView);
-  }, [defaultView]);
+    const handleHashChange = () => {
+      setCurrentView(getInitialViewFromHash());
+    };
+
+    window.addEventListener("hashchange", handleHashChange);
+    return () => {
+      window.removeEventListener("hashchange", handleHashChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    const newHash = currentView === "dashboard" ? "" : `#${currentView}`;
+    if (newHash === "") {
+      window.history.replaceState(null, "", " ");
+    } else {
+      window.history.replaceState(null, "", newHash);
+    }
+  }, [currentView]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -98,11 +122,15 @@ export default function DashboardPage() {
     }
   }, [api, selectedCamera]);
 
+  // --- THIS IS THE FIX ---
   useEffect(() => {
-    if (currentView === "dashboard") {
+    // Fetch cameras if we are on the dashboard OR the settings page,
+    // as both need the full camera list.
+    if (currentView === "dashboard" || currentView === "settings") {
       fetchCameras();
     }
   }, [currentView, fetchCameras]);
+  // --- END FIX ---
 
   const toggleMosaicFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -188,7 +216,6 @@ export default function DashboardPage() {
     setIsConfirmOpen(true);
   };
 
-  // --- 4. NEW: Helper for main content ---
   const renderMainContent = () => {
     switch (currentView) {
       case "dashboard":
@@ -249,7 +276,6 @@ export default function DashboardPage() {
     );
   };
 
-  // --- 5. NEW: Helper for header title ---
   const getHeaderText = () => {
     if (currentView === "settings") return "Settings";
     if (currentView === "events") return "Event Recordings";
@@ -268,7 +294,6 @@ export default function DashboardPage() {
             </h1>
           </div>
           <div className="flex items-center">
-            {/* --- 6. UPDATED: Show/hide logic for header buttons --- */}
             {currentView === "dashboard" &&
               viewMode !== "single" &&
               cameras.length > 0 && (
@@ -322,7 +347,6 @@ export default function DashboardPage() {
                   )}
                 </button>
               )}
-            {/* --- 7. NEW: Back to Dashboard button --- */}
             {currentView !== "dashboard" && (
               <button
                 onClick={() => setCurrentView("dashboard")}
@@ -343,7 +367,7 @@ export default function DashboardPage() {
                 as={Fragment}
                 enter="transition ease-out duration-100"
                 enterFrom="transform opacity-0 scale-95"
-                enterTo="transform opacity-100 scale-100"
+                enterTo="transform opacity-100 scale-110"
                 leave="transition ease-in duration-75"
                 leaveFrom="transform opacity-100 scale-100"
                 leaveTo="transform opacity-0 scale-95"
@@ -370,7 +394,6 @@ export default function DashboardPage() {
                       </button>
                     )}
                   </HeadlessMenu.Item>
-                  {/* --- 8. NEW: Events Button --- */}
                   <HeadlessMenu.Item>
                     {({ active }) => (
                       <button
@@ -397,19 +420,21 @@ export default function DashboardPage() {
                       </button>
                     )}
                   </HeadlessMenu.Item>
-                  <HeadlessMenu.Item>
-                    {({ active }) => (
-                      <button
-                        onClick={logout}
-                        className={`${
-                          active ? "bg-gray-100 dark:bg-zinc-700" : ""
-                        } flex w-full items-center px-4 py-2 text-sm text-gray-700 dark:text-zinc-200`}
-                      >
-                        <LogOut className="mr-2 h-5 w-5" />
-                        Logout
-                      </button>
-                    )}
-                  </HeadlessMenu.Item>
+                  <div>
+                    <HeadlessMenu.Item>
+                      {({ active }) => (
+                        <button
+                          onClick={logout}
+                          className={`${
+                            active ? "bg-gray-100 dark:bg-zinc-700" : ""
+                          } flex w-full items-center px-4 py-2 text-sm text-gray-700 dark:text-zinc-200`}
+                        >
+                          <LogOut className="mr-2 h-5 w-5" />
+                          Logout
+                        </button>
+                      )}
+                    </HeadlessMenu.Item>
+                  </div>
                 </HeadlessMenu.Items>
               </Transition>
             </HeadlessMenu>

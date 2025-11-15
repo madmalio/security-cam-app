@@ -38,17 +38,14 @@ export default function MotionSettingsPage({
     [cameras, selectedCameraId]
   );
 
-  // --- Local state for the settings ---
   const [motionType, setMotionType] = useState<MotionType>(
     selectedCamera?.motion_type || "off"
   );
   const [motionRoi, setMotionRoi] = useState(selectedCamera?.motion_roi || "");
-  // --- 1. ADD state for substream URL ---
   const [rtspSubstreamUrl, setRtspSubstreamUrl] = useState(
     selectedCamera?.rtsp_substream_url || ""
   );
 
-  // Update local state when the camera selection changes
   React.useEffect(() => {
     if (selectedCamera) {
       setMotionType(selectedCamera.motion_type);
@@ -62,7 +59,6 @@ export default function MotionSettingsPage({
 
     setIsSaving(true);
     try {
-      // --- 2. Save ONLY motion-related fields using PATCH ---
       const response = await api(`/api/cameras/${selectedCamera.id}`, {
         method: "PATCH",
         body: JSON.stringify({
@@ -79,7 +75,7 @@ export default function MotionSettingsPage({
       }
 
       toast.success("Motion settings saved!");
-      onCamerasUpdate(); // Re-fetch cameras to get updated data
+      onCamerasUpdate();
     } catch (err: any) {
       toast.error(err.message);
     } finally {
@@ -109,7 +105,6 @@ export default function MotionSettingsPage({
         </p>
       </div>
 
-      {/* --- 3. FIX: Removed max-w-md to fix "squished" dropdown --- */}
       <div className="space-y-2">
         <label
           htmlFor="camera-select"
@@ -137,7 +132,6 @@ export default function MotionSettingsPage({
         </p>
       ) : (
         <div className="space-y-8">
-          {/* Section 1: Settings */}
           <div className="space-y-6">
             <div>
               <label className="text-lg font-medium text-gray-900 dark:text-white">
@@ -171,7 +165,6 @@ export default function MotionSettingsPage({
               </div>
             </div>
 
-            {/* --- 4. Substream URL, moved here and conditional --- */}
             {motionType === "active" && (
               <div>
                 <label
@@ -229,7 +222,6 @@ export default function MotionSettingsPage({
             )}
           </div>
 
-          {/* Section 2: Live View & Grid (only if In-App is selected) */}
           {motionType === "active" && (
             <div className="space-y-4">
               <label className="text-lg font-medium text-gray-900 dark:text-white">
@@ -249,7 +241,6 @@ export default function MotionSettingsPage({
             </div>
           )}
 
-          {/* Save Button */}
           <div className="flex justify-end pt-4 border-t dark:border-zinc-700">
             <button
               onClick={handleSave}
@@ -301,7 +292,7 @@ const MotionRadioCard = ({
           className={`h-5 w-5 ${
             isActive
               ? "text-blue-600 dark:text-blue-400"
-              : "text-gray-500 dark:text-zinc-400"
+              : "text-gray-500 dark:text-zinc-4s00"
           }`}
         />
         <span

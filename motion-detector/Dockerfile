@@ -23,9 +23,8 @@ RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
 # Copy the application code
 COPY --chown=appuser:appgroup . .
-
 # --- Switch to the non-root user ---
 USER appuser
 
-# --- Add '-u' for unbuffered output ---
+# --- REVERTED to the original command ---
 CMD ["python", "-u", "detector.py"]
