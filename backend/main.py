@@ -125,24 +125,68 @@ class Event(BaseModel):
     class Config: from_attributes = True
 
 # ====================================================================
-#                 Helper Functions (REVERTED)
+#                 Security & Auth
+# ====================================================================
+def get_secret_key():
+    try:
+        with open("/run/secrets/jwt_secret_key", "r") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        print("!!! ERROR: 'jwt_secret_key' file not found. Using fallback for local dev.")
+        return "oVlxx1WjIyVNfsr2WWROPcsVyBhW5L7u"
+
+def get_mediamtx_admin_pass():
+    try:
+        with open("/run/secrets/mediamtx_admin_pass", "r") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        print("!!! ERROR: 'mediamtx_admin_pass' file not found. Using fallback.")
+        return "mysecretpassword"
+
+def get_mediamtx_viewer_pass():
+    try:
+        with open("/run/secrets/mediamtx_viewer_pass", "r") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        print("!!! ERROR: 'mediamtx_viewer_pass' file not found. Using fallback.")
+        return "secret"
+
+SECRET_KEY = get_secret_key()
+MEDIAMTX_ADMIN_PASS = get_mediamtx_admin_pass()
+MEDIAMTX_VIEWER_PASS = get_mediamtx_viewer_pass()
+
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 15
+REFRESH_TOKEN_EXPIRE_DAYS = 30
+pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
+def verify_password(plain_password, hashed_password): return pwd_context.verify(plain_password, hashed_password)
+def get_password_hash(password): return pwd_context.hash(password)
+def create_access_token(data: dict, expires_delta: timedelta):
+    to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + expires_delta
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+
+# ====================================================================
+#                 Helper Functions (UPDATED)
 # ====================================================================
 
 async def configure_mediamtx_path(camera_path: str, rtsp_url: str):
     """Adds or updates a camera path in mediamtx."""
-    auth = ("admin", "mysecretpassword")
+    auth = ("admin", MEDIAMTX_ADMIN_PASS)
     path_config = {
         "source": rtsp_url,
         "sourceOnDemand": True,
     }
 
     async with httpx.AsyncClient() as client:
-        # Use PATCH first (like in the original startup)
         patch_url = f"http://mediamtx:9997/v3/config/paths/patch/{camera_path}"
         try:
             response = await client.patch(patch_url, auth=auth, json=path_config)
             if response.status_code == 404:
-                # Path doesn't exist, so create it
                 log.warning(f"--- Path {camera_path} not found, creating... ---")
                 add_url = f"http://mediamtx:9997/v3/config/paths/add/{camera_path}"
                 add_response = await client.post(add_url, auth=auth, json=path_config)
@@ -157,7 +201,7 @@ async def configure_mediamtx_path(camera_path: str, rtsp_url: str):
             raise
 
 # ====================================================================
-#                     Startup Event (REVERTED)
+#                     Startup Event
 # ====================================================================
 @app.on_event("startup")
 async def on_startup():
@@ -174,7 +218,6 @@ async def on_startup():
                 log.warning(f"--- STARTUP: Skipping camera {camera.path} (no URL) ---")
                 continue
             log.info(f"--- STARTUP: Updating camera {camera.path} ---")
-            # --- REVERTED to simple config ---
             await configure_mediamtx_path(camera.path, camera.rtsp_url) 
             
     except Exception as e:
@@ -183,31 +226,6 @@ async def on_startup():
         db.close()
     log.info("--- STARTUP: mediamtx re-population complete. ---")
 
-
-# ====================================================================
-#                 Security & Auth
-# ====================================================================
-def get_secret_key():
-    try:
-        with open("/run/secrets/jwt_secret_key", "r") as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        print("!!! ERROR: 'jwt_secret_key' file not found. Using fallback for local dev.")
-        return "oVlxx1WjIyVNfsr2WWROPcsVyBhW5L7u"
-SECRET_KEY = get_secret_key()
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 15
-REFRESH_TOKEN_EXPIRE_DAYS = 30
-pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
-def verify_password(plain_password, hashed_password): return pwd_context.verify(plain_password, hashed_password)
-def get_password_hash(password): return pwd_context.hash(password)
-def create_access_token(data: dict, expires_delta: timedelta):
-    to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + expires_delta
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
 
 # ====================================================================
 #                 DB Functions
@@ -444,7 +462,7 @@ async def delete_camera(
         
         mediamtx_url = f"http://mediamtx:9997/v3/config/paths/delete/{db_camera.path}"
         try:
-            auth = ("admin", "mysecretpassword")
+            auth = ("admin", MEDIAMTX_ADMIN_PASS)
             async with httpx.AsyncClient() as client:
                 response = await client.delete(mediamtx_url, auth=auth)
             if response.status_code != 404: response.raise_for_status()
@@ -483,7 +501,7 @@ async def test_camera_connection(
 ):
     temp_path = f"test_{uuid.uuid4()}"
     log.info(f"--- Creating temp test path {temp_path} ---")
-    auth = ("admin", "mysecretpassword")
+    auth = ("admin", MEDIAMTX_ADMIN_PASS)
     try:
         async with httpx.AsyncClient() as client:
             add_url = f"http://mediamtx:9997/v3/config/paths/add/{temp_path}"
@@ -501,7 +519,7 @@ async def test_camera_connection(
 async def delete_temp_path(path: str):
     await asyncio.sleep(60) 
     log.info(f"--- CLEANUP: Deleting temp test path {path} ---")
-    auth = ("admin", "mysecretpassword")
+    auth = ("admin", MEDIAMTX_ADMIN_PASS)
     mediamtx_url = f"http://mediamtx:9997/v3/config/paths/delete/{path}"
     try:
         async with httpx.AsyncClient() as client:
@@ -509,7 +527,7 @@ async def delete_temp_path(path: str):
     except Exception as e:
         log.error(f"--- Failed to delete temp path {path}: {e} ---")
 
-# --- Event / Webhook Endpoints ---
+# --- Event / Webhook Endpoints (FIXED) ---
 @app.post("/api/webhook/motion/{camera_path}")
 async def webhook_motion_legacy(
     camera_path: str,
@@ -527,13 +545,25 @@ async def webhook_motion_legacy(
         return {"message": "Webhook ignored. Camera not in webhook mode."}
 
     now = datetime.now(timezone.utc)
-    video_db_path = f"webhook-event-{now.strftime('%Y%m%d-%H%M%S')}" 
+    
+    # --- FIX: Create a consistent path and a placeholder file ---
+    video_db_path = f"recordings/webhook-event-{now.strftime('%Y%m%d-%H%M%S')}.log"
+    abs_video_path = f"/{video_db_path}"
+    
+    try:
+        # Create the placeholder file
+        with open(abs_video_path, "w") as f:
+            f.write(f"Legacy webhook event for {camera_path} at {now.isoformat()}")
+    except Exception as e:
+        log.error(f"--- Failed to create placeholder file {abs_video_path}: {e} ---")
+        # Don't fail the request, just log the error
+    # --- END FIX ---
     
     db_event = models.Event(
         start_time=now,
         end_time=now, 
         reason="motion (webhook)",
-        video_path=video_db_path, 
+        video_path=video_db_path, # <-- Use fixed path
         camera_id=camera.id,
         user_id=camera.owner_id
     )
@@ -579,12 +609,14 @@ async def delete_event(
         db.delete(event)
         db.commit()
         
+        # This path is now correct: e.g., /recordings/webhook-event-....log
         abs_video_path = f"/{video_path}" 
         if os.path.exists(abs_video_path):
             os.remove(abs_video_path)
             log.info(f"--- Deleted video file: {abs_video_path} ---")
         else:
-            log.warning(f"--- Video file not found: {abs_video_path} ---")
+            # This warning should no longer appear for webhook events
+            log.warning(f"--- Video file not found: {abs_video_path} ---") 
             
         if thumb_path:
             abs_thumb_path = f"/{thumb_path}"
@@ -638,7 +670,7 @@ async def delete_account(
     try:
         user = db.merge(current_user)
         cameras = get_cameras_by_user(db, user_id=user.id)
-        auth = ("admin", "mysecretpassword")
+        auth = ("admin", MEDIAMTX_ADMIN_PASS)
         async with httpx.AsyncClient() as client:
             tasks = []
             for camera in cameras:
@@ -669,7 +701,7 @@ async def logout_all_sessions(
 async def get_webrtc_credentials(
     current_user: models.User = Depends(get_current_user_from_token)
 ):
-    return {"user": "viewer", "pass": "secret"}
+    return {"user": "viewer", "pass": MEDIAMTX_VIEWER_PASS}
 @app.get("/api/sessions", response_model=List[UserSession])
 async def get_sessions(
     current_user: models.User = Depends(get_current_user_from_token)

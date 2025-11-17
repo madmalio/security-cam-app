@@ -258,8 +258,6 @@ def process_camera(camera, stop_event):
     cell_height = H // 10
     
     last_analysis_time = 0
-    
-    # --- DEBUG LINES REMOVED ---
 
     try:
         while not stop_event.is_set():
@@ -294,25 +292,41 @@ def process_camera(camera, stop_event):
             
             contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
-            # --- DEBUG BLOCK REMOVED ---
-
+            # ========================================================
+            # --- BEGIN REPLACEMENT: Bounding Box Overlap Logic ---
+            # ========================================================
             motion_detected = False
             if roi_set:
                 for c in contours:
-                    if cv2.contourArea(c) < 100: 
+                    if cv2.contourArea(c) < 100: # Filter out tiny noise
                         continue
-                        
-                    M = cv2.moments(c)
-                    if M["m00"] == 0:
-                        continue
-                    cX = int(M["m10"] / M["m00"])
-                    cY = int(M["m01"] / M["m00"])
-                    grid_x = max(0, min(cX // cell_width, 9))
-                    grid_y = max(0, min(cY // cell_height, 9))
-                    cell_id = (grid_y * 10) + grid_x
-                    if cell_id in roi_set:
-                        motion_detected = True
-                        break 
+                    
+                    # 1. Get the bounding box of the motion
+                    (x, y, w, h) = cv2.boundingRect(c)
+                    
+                    # 2. Find which grid cells this box touches
+                    start_col = max(0, min(x // cell_width, 9))
+                    end_col = max(0, min((x + w) // cell_width, 9))
+                    start_row = max(0, min(y // cell_height, 9))
+                    end_row = max(0, min((y + h) // cell_height, 9))
+
+                    # 3. Check if ANY of those cells are in our ROI
+                    found = False
+                    for row in range(start_row, end_row + 1):
+                        for col in range(start_col, end_col + 1):
+                            cell_id = (row * 10) + col
+                            if cell_id in roi_set:
+                                motion_detected = True
+                                found = True
+                                break
+                        if found:
+                            break
+                    
+                    if found:
+                        break # Found motion, no need to check other contours
+            # ========================================================
+            # --- END REPLACEMENT ---
+            # ========================================================
             
             is_currently_recording = is_recording.get(path, False)
 

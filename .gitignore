@@ -5,6 +5,8 @@ backend/.env
 db_password.txt
 secret_key.txt
 db_url.txt
+mediamtx_admin_pass.txt
+mediamtx_viewer_pass.txt
 
 # --- Node.js / Next.js ---
 # Ignore the massive folder of downloaded packages

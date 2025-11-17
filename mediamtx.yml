@@ -1,12 +1,12 @@
 authMethod: internal
 authInternalUsers:
   - user: admin
-    pass: mysecretpassword
+    pass: ${MTX_API_INTERNAL_USERS_ADMIN_PASS} # <-- CHANGED
     permissions:
       - action: api
       - action: read
   - user: viewer
-    pass: secret
+    pass: ${MTX_API_INTERNAL_USERS_VIEWER_PASS} # <-- CHANGED
     permissions:
       - action: read
 
