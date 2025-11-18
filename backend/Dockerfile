@@ -1,25 +1,26 @@
-# 1. Start from the Python 3.10 slim image
 FROM python:3.10-slim
 
-# Set the working directory in the container
+RUN apt-get update && apt-get install -y \
+    libgl1 \
+    libglib2.0-0 \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- MATCHING VOLUME MOUNT PATH ---
 WORKDIR /code
 
-# --- Add non-root user (Debian syntax) ---
-RUN addgroup --system appgroup && \
-    adduser --system --ingroup appgroup --no-create-home appuser
+# --- FIX: Set fixed UID/GID (1000) so it matches motion-detector ---
+RUN addgroup --system --gid 1000 appgroup && \
+    adduser --system --uid 1000 --ingroup appgroup --no-create-home appuser
 
-# --- FIX: Create the correct mount point ---
+# Create recordings dir and set permission
 RUN mkdir -p /recordings && chown -R appuser:appgroup /recordings
 
-# Copy the requirements file and install dependencies
-COPY --chown=appuser:appgroup ./requirements.txt /code/requirements.txt
-RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
+COPY --chown=appuser:appgroup ./requirements.txt .
+RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
-# Copy the rest of the backend application code
-COPY --chown=appuser:appgroup . /code
+COPY --chown=appuser:appgroup . .
 
-# --- Set permissions and switch user ---
 USER appuser
 
-# Run the FastAPI server
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]

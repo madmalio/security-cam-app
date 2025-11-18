@@ -563,7 +563,8 @@ async def webhook_motion_legacy(
 @app.get("/api/events", response_model=List[Event])
 async def get_events(
     camera_id: Optional[int] = None, 
-    date_str: Optional[str] = None, # <-- 1. RENAMED VARIABLE
+    start_ts: Optional[datetime] = None, # <-- Changed from date_str
+    end_ts: Optional[datetime] = None,   # <-- Added end_ts
     current_user: models.User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db)
 ):
@@ -575,13 +576,11 @@ async def get_events(
     if camera_id is not None:
         query = query.filter(models.Event.camera_id == camera_id)
         
-    if date_str is not None: # <-- 2. USE RENAMED VARIABLE
-        try:
-            # 3. Call the imported 'date' class, not the string variable
-            selected_date = date.fromisoformat(date_str) 
-            query = query.filter(func.date(models.Event.start_time) == selected_date)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+    # Filter by the specific time range provided by the frontend
+    if start_ts:
+        query = query.filter(models.Event.start_time >= start_ts)
+    if end_ts:
+        query = query.filter(models.Event.start_time <= end_ts)
             
     events = (
         query.options(joinedload(models.Event.camera))
@@ -594,25 +593,20 @@ async def get_events(
 
 @app.get("/api/events/summary", response_model=List[EventSummary])
 async def get_event_summary(
-    date_str: str, # <-- 1. RENAMED VARIABLE
+    start_ts: datetime, # <-- Changed from date_str (now required)
+    end_ts: datetime,   # <-- Added end_ts (now required)
     camera_id: Optional[int] = None,
     current_user: models.User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db)
 ):
     """
-    Fetches a lightweight list of event start/end times for a specific day,
-    optionally filtered by a single camera.
+    Fetches events within a specific time range (calculated by frontend to match local day)
     """
-    try:
-        # 2. Call the imported 'date' class, not the string variable
-        selected_date = date.fromisoformat(date_str) 
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
-
     query = (
         db.query(models.Event)
         .filter(models.Event.user_id == current_user.id)
-        .filter(func.date(models.Event.start_time) == selected_date)
+        .filter(models.Event.start_time >= start_ts)
+        .filter(models.Event.start_time <= end_ts)
     )
     
     if camera_id is not None:

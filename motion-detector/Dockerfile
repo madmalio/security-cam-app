@@ -11,11 +11,11 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# --- Add non-root user (Debian syntax) ---
-RUN addgroup --system appgroup && \
-    adduser --system --ingroup appgroup --no-create-home appuser
+# --- FIX: Set fixed UID/GID (1000) ---
+RUN addgroup --system --gid 1000 appgroup && \
+    adduser --system --uid 1000 --ingroup appgroup --no-create-home appuser
 
-# --- Create directories (ownership will be fixed by entrypoint) ---
+# --- Create directories ---
 RUN mkdir -p /recordings
 RUN mkdir -p /var/log/motion/
 RUN mkdir -p /app/motion_confs
@@ -27,11 +27,8 @@ RUN pip install --no-cache-dir --upgrade -r requirements.txt
 # Copy the application code (as root)
 COPY . .
 
-# --- Make the new entrypoint executable ---
+# --- Make the entrypoint executable ---
 RUN chmod +x ./entrypoint.sh
-
-# --- DO NOT 'USER appuser' HERE ---
-# We need the entrypoint to run as root to chown the volumes
 
 # --- Run the entrypoint script ---
 ENTRYPOINT ["./entrypoint.sh"]

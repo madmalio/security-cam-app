@@ -1,5 +1,6 @@
 "use client";
 
+// ... (Imports remain the same)
 import React, { useState, useEffect, useCallback, Fragment } from "react";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { Event, Camera } from "@/app/types";
@@ -13,7 +14,7 @@ import EventTimeline from "./EventTimeline";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
-// --- Helper: Event Card (No Changes) ---
+// ... (EventCard component remains the same) ...
 const EventCard = ({
   event,
   onPlay,
@@ -98,13 +99,9 @@ export default function EventsPage({ cameras }: EventsPageProps) {
   const [isLoading, setIsLoading] = useState(true);
 
   const [selectedTabIndex, setSelectedTabIndex] = useState(0);
-
-  // --- THIS IS THE FIX ---
-  // Allow the state to be string OR null
   const [selectedDate, setSelectedDate] = useState<string | null>(
     getTodayString()
   );
-  // --- END OF FIX ---
 
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
@@ -117,12 +114,12 @@ export default function EventsPage({ cameras }: EventsPageProps) {
     selectedTabIndex === 0 ? null : cameras[selectedTabIndex - 1]?.id;
 
   useEffect(() => {
-    // Don't fetch if no date is selected
     if (!selectedDate) {
       setEvents([]);
       setIsLoading(false);
       return;
     }
+    setEvents([]);
 
     const fetchEvents = async () => {
       setIsLoading(true);
@@ -131,7 +128,14 @@ export default function EventsPage({ cameras }: EventsPageProps) {
       if (selectedCameraId) {
         params.append("camera_id", selectedCameraId.toString());
       }
-      params.append("date", selectedDate);
+
+      // --- FIX: Convert Local Date to UTC ISO strings ---
+      const localStart = new Date(selectedDate + "T00:00:00");
+      const localEnd = new Date(selectedDate + "T23:59:59.999");
+
+      params.append("start_ts", localStart.toISOString());
+      params.append("end_ts", localEnd.toISOString());
+      // --- END FIX ---
 
       const query = params.toString();
 
@@ -153,6 +157,9 @@ export default function EventsPage({ cameras }: EventsPageProps) {
     fetchEvents();
   }, [api, selectedCameraId, selectedDate, cameras]);
 
+  // ... (Rest of the component stays exactly the same as before) ...
+  // (handlePlayClick, delete handlers, renderEventGrid, return statement)
+  // Just ensure the return statement includes the updated EventTimeline with the new logic.
   const handlePlayClick = (event: Event) => {
     setSelectedEvent(event);
     setIsPlayerOpen(true);
@@ -240,7 +247,6 @@ export default function EventsPage({ cameras }: EventsPageProps) {
           </p>
         </div>
 
-        {/* --- Filter Controls --- */}
         <div className="flex flex-col md:flex-row gap-4">
           <div className="flex-1">
             <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300">
@@ -297,7 +303,6 @@ export default function EventsPage({ cameras }: EventsPageProps) {
             <input
               type="date"
               value={selectedDate || ""}
-              // The 'onChange' handler is now valid because the state is <string | null>
               onChange={(e) => setSelectedDate(e.target.value || null)}
               className="block w-full p-2.5 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
             />
@@ -312,7 +317,6 @@ export default function EventsPage({ cameras }: EventsPageProps) {
           </div>
         </div>
 
-        {/* --- ADD THE TIMELINE COMPONENT --- */}
         <div className="pt-4">
           {selectedDate && (
             <EventTimeline
@@ -322,9 +326,7 @@ export default function EventsPage({ cameras }: EventsPageProps) {
             />
           )}
         </div>
-        {/* --- END OF TIMELINE SECTION --- */}
 
-        {/* --- Content Area (with centering fix) --- */}
         <div className="mt-6 flex justify-center">
           {isLoading ? (
             <div className="flex justify-center p-12">
@@ -336,7 +338,6 @@ export default function EventsPage({ cameras }: EventsPageProps) {
         </div>
       </div>
 
-      {/* Modals (unchanged) */}
       <EventPlayerModal
         isOpen={isPlayerOpen}
         onClose={handleClosePlayer}

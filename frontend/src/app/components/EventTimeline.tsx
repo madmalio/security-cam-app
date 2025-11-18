@@ -4,9 +4,8 @@ import React, { useState, useEffect } from "react";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { toast } from "sonner";
 import { Loader } from "lucide-react";
-import { format } from "date-fns";
+import { format, startOfDay, endOfDay } from "date-fns"; // Ensure startOfDay/endOfDay are imported
 
-// This is the new lightweight type for our summary
 interface EventSummary {
   id: number;
   start_time: string;
@@ -15,19 +14,18 @@ interface EventSummary {
 }
 
 interface EventTimelineProps {
-  date: string; // The selected date in "yyyy-MM-dd" format
-  cameraId: number | null; // The selected camera ID or null for "All"
+  date: string;
+  cameraId: number | null;
   onEventClick: (eventId: number) => void;
 }
 
-// Helper function to get the percentage of the day for a given time
 const timeToPercentage = (time: string) => {
   const date = new Date(time);
-  const hours = date.getUTCHours();
+  const hours = date.getUTCHours(); // Backend returns UTC
   const minutes = date.getUTCMinutes();
   const seconds = date.getUTCSeconds();
   const totalSeconds = hours * 3600 + minutes * 60 + seconds;
-  return (totalSeconds / 86400) * 100; // 86400 seconds in a day
+  return (totalSeconds / 86400) * 100;
 };
 
 export default function EventTimeline({
@@ -39,16 +37,21 @@ export default function EventTimeline({
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Parse the YYYY-MM-DD string as local time
+  const displayDate = new Date(date + "T00:00:00");
+
   useEffect(() => {
     const fetchEventSummary = async () => {
       setIsLoading(true);
 
-      const params = new URLSearchParams();
+      // --- FIX: Calculate UTC range for the *Local* day ---
+      const localStart = new Date(date + "T00:00:00");
+      const localEnd = new Date(date + "T23:59:59.999");
 
-      // --- THIS IS THE FIX ---
-      // The backend endpoint is expecting 'date_str', not 'date'
-      params.append("date_str", date);
-      // --- END OF FIX ---
+      const params = new URLSearchParams();
+      params.append("start_ts", localStart.toISOString());
+      params.append("end_ts", localEnd.toISOString());
+      // --- END FIX ---
 
       if (cameraId) {
         params.append("camera_id", cameraId.toString());
@@ -70,12 +73,12 @@ export default function EventTimeline({
     };
 
     fetchEventSummary();
-  }, [api, date, cameraId]); // Re-fetch when date or camera changes
+  }, [api, date, cameraId]);
 
   return (
     <div className="w-full space-y-2">
       <label className="text-sm font-medium text-gray-700 dark:text-zinc-300">
-        Event Timeline for {format(new Date(date), "MMMM d, yyyy")}
+        Event Timeline for {format(displayDate, "MMMM d, yyyy")}
       </label>
       <div className="relative w-full h-8 rounded-full bg-gray-200 dark:bg-zinc-700 overflow-hidden">
         {isLoading ? (
@@ -84,13 +87,26 @@ export default function EventTimeline({
           </div>
         ) : (
           events.map((event) => {
-            const start = timeToPercentage(event.start_time);
-            // Use end time if it exists, otherwise default to 10 seconds
-            const end = event.end_time
-              ? timeToPercentage(event.end_time)
-              : start + 0.1; // (10 / 86400 * 100) ~ 0.01%
+            // We must adjust the UTC time to Local time percentage for display
+            const eventDate = new Date(event.start_time);
 
-            const width = Math.max(end - start, 0.2); // Ensure a minimum visible width
+            // Calculate seconds from start of *local* day
+            const startOfDayMs = new Date(date + "T00:00:00").getTime();
+            const eventMs = eventDate.getTime();
+            const diffSeconds = (eventMs - startOfDayMs) / 1000;
+
+            const start = (diffSeconds / 86400) * 100;
+            const end = event.end_time
+              ? start +
+                ((new Date(event.end_time).getTime() - eventMs) /
+                  1000 /
+                  86400) *
+                  100
+              : start + 0.1;
+
+            const width = Math.max(end - start, 0.2);
+
+            if (start < 0 || start > 100) return null; // Skip if out of bounds (timezone edge case)
 
             return (
               <button
@@ -100,17 +116,13 @@ export default function EventTimeline({
                   left: `${start}%`,
                   width: `${width}%`,
                 }}
-                title={`Event at ${format(
-                  new Date(event.start_time),
-                  "h:mm a"
-                )}`}
+                title={`Event at ${format(eventDate, "h:mm a")}`}
                 onClick={() => onEventClick(event.id)}
               />
             );
           })
         )}
       </div>
-      {/* Hour labels */}
       <div className="hidden md:flex w-full justify-between text-xs text-gray-500 dark:text-zinc-400">
         <span>12 AM</span>
         <span>3 AM</span>
