@@ -10,7 +10,7 @@ import logging
 import asyncio
 import hashlib
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date # Keep date import
 from fastapi.staticfiles import StaticFiles
 import os
 
@@ -123,6 +123,14 @@ class Event(BaseModel):
     user_id: int
     camera: CameraBase
     class Config: from_attributes = True
+class EventSummary(BaseModel):
+    id: int
+    start_time: datetime
+    end_time: Optional[datetime] = None
+    camera_id: int
+    
+    class Config: from_attributes = True
+
 
 # ====================================================================
 #                 Security & Auth
@@ -135,25 +143,9 @@ def get_secret_key():
         print("!!! ERROR: 'jwt_secret_key' file not found. Using fallback for local dev.")
         return "oVlxx1WjIyVNfsr2WWROPcsVyBhW5L7u"
 
-def get_mediamtx_admin_pass():
-    try:
-        with open("/run/secrets/mediamtx_admin_pass", "r") as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        print("!!! ERROR: 'mediamtx_admin_pass' file not found. Using fallback.")
-        return "mysecretpassword"
-
-def get_mediamtx_viewer_pass():
-    try:
-        with open("/run/secrets/mediamtx_viewer_pass", "r") as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        print("!!! ERROR: 'mediamtx_viewer_pass' file not found. Using fallback.")
-        return "secret"
-
 SECRET_KEY = get_secret_key()
-MEDIAMTX_ADMIN_PASS = get_mediamtx_admin_pass()
-MEDIAMTX_VIEWER_PASS = get_mediamtx_viewer_pass()
+MEDIAMTX_ADMIN_PASS = "mysecretpassword"
+MEDIAMTX_VIEWER_PASS = "secret"
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
@@ -175,8 +167,7 @@ def create_access_token(data: dict, expires_delta: timedelta):
 # ====================================================================
 
 async def configure_mediamtx_path(camera_path: str, rtsp_url: str):
-    """Adds or updates a camera path in mediamtx."""
-    auth = ("admin", MEDIAMTX_ADMIN_PASS)
+    auth = ("admin", MEDIAMTX_ADMIN_PASS) 
     path_config = {
         "source": rtsp_url,
         "sourceOnDemand": True,
@@ -546,24 +537,20 @@ async def webhook_motion_legacy(
 
     now = datetime.now(timezone.utc)
     
-    # --- FIX: Create a consistent path and a placeholder file ---
     video_db_path = f"recordings/webhook-event-{now.strftime('%Y%m%d-%H%M%S')}.log"
     abs_video_path = f"/{video_db_path}"
     
     try:
-        # Create the placeholder file
         with open(abs_video_path, "w") as f:
             f.write(f"Legacy webhook event for {camera_path} at {now.isoformat()}")
     except Exception as e:
         log.error(f"--- Failed to create placeholder file {abs_video_path}: {e} ---")
-        # Don't fail the request, just log the error
-    # --- END FIX ---
     
     db_event = models.Event(
         start_time=now,
         end_time=now, 
         reason="motion (webhook)",
-        video_path=video_db_path, # <-- Use fixed path
+        video_path=video_db_path, 
         camera_id=camera.id,
         user_id=camera.owner_id
     )
@@ -575,18 +562,68 @@ async def webhook_motion_legacy(
 
 @app.get("/api/events", response_model=List[Event])
 async def get_events(
+    camera_id: Optional[int] = None, 
+    date_str: Optional[str] = None, # <-- 1. RENAMED VARIABLE
     current_user: models.User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db)
 ):
-    events = (
+    query = (
         db.query(models.Event)
         .filter(models.Event.user_id == current_user.id)
-        .options(joinedload(models.Event.camera))
+    )
+    
+    if camera_id is not None:
+        query = query.filter(models.Event.camera_id == camera_id)
+        
+    if date_str is not None: # <-- 2. USE RENAMED VARIABLE
+        try:
+            # 3. Call the imported 'date' class, not the string variable
+            selected_date = date.fromisoformat(date_str) 
+            query = query.filter(func.date(models.Event.start_time) == selected_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+            
+    events = (
+        query.options(joinedload(models.Event.camera))
         .order_by(models.Event.start_time.desc())
-        .limit(100)
+        .limit(100) 
         .all()
     )
     return events
+
+
+@app.get("/api/events/summary", response_model=List[EventSummary])
+async def get_event_summary(
+    date_str: str, # <-- 1. RENAMED VARIABLE
+    camera_id: Optional[int] = None,
+    current_user: models.User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db)
+):
+    """
+    Fetches a lightweight list of event start/end times for a specific day,
+    optionally filtered by a single camera.
+    """
+    try:
+        # 2. Call the imported 'date' class, not the string variable
+        selected_date = date.fromisoformat(date_str) 
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+
+    query = (
+        db.query(models.Event)
+        .filter(models.Event.user_id == current_user.id)
+        .filter(func.date(models.Event.start_time) == selected_date)
+    )
+    
+    if camera_id is not None:
+        query = query.filter(models.Event.camera_id == camera_id)
+        
+    events = (
+        query.order_by(models.Event.start_time.asc())
+        .all()
+    )
+    return events
+
 
 @app.delete("/api/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_event(
@@ -609,13 +646,11 @@ async def delete_event(
         db.delete(event)
         db.commit()
         
-        # This path is now correct: e.g., /recordings/webhook-event-....log
         abs_video_path = f"/{video_path}" 
         if os.path.exists(abs_video_path):
             os.remove(abs_video_path)
             log.info(f"--- Deleted video file: {abs_video_path} ---")
         else:
-            # This warning should no longer appear for webhook events
             log.warning(f"--- Video file not found: {abs_video_path} ---") 
             
         if thumb_path:

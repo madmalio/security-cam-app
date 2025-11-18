@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, Fragment } from "react";
+import React, { useState, useEffect, useCallback, Fragment } from "react";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { Event, Camera } from "@/app/types";
 import { toast } from "sonner";
@@ -8,17 +8,12 @@ import { Loader, Video, Calendar, Tag, PlayCircle, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 import EventPlayerModal from "./EventPlayerModal";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
-import { Tab } from "@headlessui/react"; // <-- 1. Import Tab component
+import { Tab } from "@headlessui/react";
+import EventTimeline from "./EventTimeline";
 
-// --- 2. Get API_URL to build thumbnail paths ---
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
-type GroupedEvents = {
-  camera: Camera;
-  events: Event[];
-};
-
-// --- 3. New Event Card component ---
+// --- Helper: Event Card (No Changes) ---
 const EventCard = ({
   event,
   onPlay,
@@ -36,14 +31,13 @@ const EventCard = ({
 
   return (
     <div className="flex flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-zinc-700 dark:bg-zinc-800">
-      {/* Thumbnail */}
       <div className="relative aspect-video w-full bg-gray-100 dark:bg-zinc-700">
         {thumbnailUrl ? (
           <img
             src={thumbnailUrl}
             alt="Event thumbnail"
             className="h-full w-full object-cover"
-            onError={() => setThumbError(true)} // Fallback if image fails
+            onError={() => setThumbError(true)}
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center">
@@ -51,8 +45,6 @@ const EventCard = ({
           </div>
         )}
       </div>
-
-      {/* Event Info */}
       <div className="flex-1 p-4">
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
           Motion Detected
@@ -68,8 +60,6 @@ const EventCard = ({
           </span>
         </div>
       </div>
-
-      {/* Actions */}
       <div className="flex-shrink-0 flex gap-2 p-4 border-t border-gray-100 dark:border-zinc-700">
         <button
           onClick={() => onPlay(event)}
@@ -90,11 +80,31 @@ const EventCard = ({
   );
 };
 
-// --- 4. Main Page Component ---
-export default function EventsPage() {
+// Helper: Format date for <input type="date">
+const getTodayString = () => {
+  const today = new Date();
+  const offset = today.getTimezoneOffset();
+  const adjustedToday = new Date(today.getTime() - offset * 60 * 1000);
+  return adjustedToday.toISOString().split("T")[0];
+};
+
+interface EventsPageProps {
+  cameras: Camera[];
+}
+
+export default function EventsPage({ cameras }: EventsPageProps) {
   const { api } = useAuth();
   const [events, setEvents] = useState<Event[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  const [selectedTabIndex, setSelectedTabIndex] = useState(0);
+
+  // --- THIS IS THE FIX ---
+  // Allow the state to be string OR null
+  const [selectedDate, setSelectedDate] = useState<string | null>(
+    getTodayString()
+  );
+  // --- END OF FIX ---
 
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
@@ -103,11 +113,30 @@ export default function EventsPage() {
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  const selectedCameraId =
+    selectedTabIndex === 0 ? null : cameras[selectedTabIndex - 1]?.id;
+
   useEffect(() => {
+    // Don't fetch if no date is selected
+    if (!selectedDate) {
+      setEvents([]);
+      setIsLoading(false);
+      return;
+    }
+
     const fetchEvents = async () => {
       setIsLoading(true);
+
+      const params = new URLSearchParams();
+      if (selectedCameraId) {
+        params.append("camera_id", selectedCameraId.toString());
+      }
+      params.append("date", selectedDate);
+
+      const query = params.toString();
+
       try {
-        const response = await api("/api/events");
+        const response = await api(`/api/events?${query}`);
         if (!response) return;
 
         if (!response.ok) {
@@ -122,32 +151,8 @@ export default function EventsPage() {
       }
     };
     fetchEvents();
-  }, [api]);
+  }, [api, selectedCameraId, selectedDate, cameras]);
 
-  // --- 5. New logic for tabs ---
-  const { cameras, eventsByCameraId } = useMemo(() => {
-    const cameras = new Map<number, Camera>();
-    const eventsByCameraId = new Map<number, Event[]>();
-
-    for (const event of events) {
-      if (!cameras.has(event.camera.id)) {
-        cameras.set(event.camera.id, event.camera);
-      }
-      if (!eventsByCameraId.has(event.camera.id)) {
-        eventsByCameraId.set(event.camera.id, []);
-      }
-      eventsByCameraId.get(event.camera.id)!.push(event);
-    }
-
-    // Sort cameras by name for the tab list
-    const sortedCameras = Array.from(cameras.values()).sort((a, b) =>
-      a.name.localeCompare(b.name)
-    );
-
-    return { cameras: sortedCameras, eventsByCameraId };
-  }, [events]);
-
-  // --- Handlers (unchanged) ---
   const handlePlayClick = (event: Event) => {
     setSelectedEvent(event);
     setIsPlayerOpen(true);
@@ -184,6 +189,15 @@ export default function EventsPage() {
     }
   };
 
+  const handleTimelineEventClick = (eventId: number) => {
+    const eventToPlay = events.find((e) => e.id === eventId);
+    if (eventToPlay) {
+      handlePlayClick(eventToPlay);
+    } else {
+      toast.error("Could not find event. It may be on a different day.");
+    }
+  };
+
   const renderEventGrid = (eventList: Event[]) => {
     if (eventList.length === 0) {
       return (
@@ -194,14 +208,14 @@ export default function EventsPage() {
               No events recorded
             </h3>
             <p className="mt-2 text-sm text-gray-500 dark:text-zinc-400">
-              This camera has not recorded any motion events.
+              No events found matching your selected filters.
             </p>
           </div>
         </div>
       );
     }
     return (
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <div className="inline-grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         {eventList.map((event) => (
           <EventCard
             key={event.id}
@@ -222,37 +236,22 @@ export default function EventsPage() {
             Event Recordings
           </h1>
           <p className="mt-1 text-gray-500 dark:text-zinc-400">
-            Browse motion-detected recordings, grouped by camera.
+            Browse motion-detected recordings.
           </p>
         </div>
 
-        {isLoading ? (
-          <div className="flex justify-center p-12">
-            <Loader className="h-10 w-10 animate-spin text-zinc-500" />
-          </div>
-        ) : (
-          // --- 6. New Tab Layout ---
-          <Tab.Group>
-            <Tab.List className="flex space-x-1 rounded-lg bg-gray-200 p-1 dark:bg-zinc-800">
-              <Tab as={Fragment}>
-                {({ selected }) => (
-                  <button
-                    className={`
-                      w-full rounded-lg py-2.5 text-sm font-medium leading-5
-                      ${
-                        selected
-                          ? "bg-white text-blue-700 shadow dark:bg-zinc-700 dark:text-white"
-                          : "text-gray-600 hover:bg-white/50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
-                      }
-                      focus:outline-none focus:ring-2 ring-blue-500 ring-opacity-60
-                    `}
-                  >
-                    All Events
-                  </button>
-                )}
-              </Tab>
-              {cameras.map((camera) => (
-                <Tab as={Fragment} key={camera.id}>
+        {/* --- Filter Controls --- */}
+        <div className="flex flex-col md:flex-row gap-4">
+          <div className="flex-1">
+            <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300">
+              Filter by Camera
+            </label>
+            <Tab.Group
+              selectedIndex={selectedTabIndex}
+              onChange={setSelectedTabIndex}
+            >
+              <Tab.List className="flex space-x-1 rounded-lg bg-gray-200 p-1 dark:bg-zinc-800">
+                <Tab as={Fragment}>
                   {({ selected }) => (
                     <button
                       className={`
@@ -265,34 +264,84 @@ export default function EventsPage() {
                         focus:outline-none focus:ring-2 ring-blue-500 ring-opacity-60
                       `}
                     >
-                      {camera.name}
+                      All Events
                     </button>
                   )}
                 </Tab>
-              ))}
-            </Tab.List>
+                {cameras.map((camera) => (
+                  <Tab as={Fragment} key={camera.id}>
+                    {({ selected }) => (
+                      <button
+                        className={`
+                          w-full rounded-lg py-2.5 text-sm font-medium leading-5
+                          ${
+                            selected
+                              ? "bg-white text-blue-700 shadow dark:bg-zinc-700 dark:text-white"
+                              : "text-gray-600 hover:bg-white/50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
+                          }
+                          focus:outline-none focus:ring-2 ring-blue-500 ring-opacity-60
+                        `}
+                      >
+                        {camera.name}
+                      </button>
+                    )}
+                  </Tab>
+                ))}
+              </Tab.List>
+            </Tab.Group>
+          </div>
+          <div className="w-full md:w-48">
+            <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300">
+              Filter by Date
+            </label>
+            <input
+              type="date"
+              value={selectedDate || ""}
+              // The 'onChange' handler is now valid because the state is <string | null>
+              onChange={(e) => setSelectedDate(e.target.value || null)}
+              className="block w-full p-2.5 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
+            />
+            {selectedDate !== getTodayString() && (
+              <button
+                onClick={() => setSelectedDate(getTodayString())}
+                className="w-full text-left text-sm text-blue-600 hover:underline dark:text-blue-400 mt-1"
+              >
+                Jump to Today
+              </button>
+            )}
+          </div>
+        </div>
 
-            <Tab.Panels className="mt-6">
-              {/* All Events Panel */}
-              <Tab.Panel>{renderEventGrid(events)}</Tab.Panel>
+        {/* --- ADD THE TIMELINE COMPONENT --- */}
+        <div className="pt-4">
+          {selectedDate && (
+            <EventTimeline
+              date={selectedDate}
+              cameraId={selectedCameraId}
+              onEventClick={handleTimelineEventClick}
+            />
+          )}
+        </div>
+        {/* --- END OF TIMELINE SECTION --- */}
 
-              {/* Per-Camera Panels */}
-              {cameras.map((camera) => (
-                <Tab.Panel key={camera.id}>
-                  {renderEventGrid(eventsByCameraId.get(camera.id) || [])}
-                </Tab.Panel>
-              ))}
-            </Tab.Panels>
-          </Tab.Group>
-        )}
+        {/* --- Content Area (with centering fix) --- */}
+        <div className="mt-6 flex justify-center">
+          {isLoading ? (
+            <div className="flex justify-center p-12">
+              <Loader className="h-10 w-10 animate-spin text-zinc-500" />
+            </div>
+          ) : (
+            renderEventGrid(events)
+          )}
+        </div>
       </div>
 
+      {/* Modals (unchanged) */}
       <EventPlayerModal
         isOpen={isPlayerOpen}
         onClose={handleClosePlayer}
         event={selectedEvent}
       />
-
       <ConfirmDeleteModal
         isOpen={isDeleteOpen}
         onClose={closeDeleteModal}

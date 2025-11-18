@@ -1,10 +1,5 @@
 import time
 import os
-
-# Set TCP option BEFORE importing cv2
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
-
-import cv2
 import sqlalchemy
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 from sqlalchemy import Column, ForeignKey, Integer, String, DateTime
@@ -12,14 +7,19 @@ from datetime import datetime, timezone, timedelta
 from threading import Thread
 import subprocess
 import logging
+import uvicorn
+from fastapi import FastAPI, HTTPException
 import numpy as np
 
-# --- Logging ---
+# --- Logging Setup ---
 logging.basicConfig(level=logging.INFO,
                     format='[%(asctime)s] [%(levelname)s] %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S')
 log = logging.getLogger(__name__)
 
+# --- Global Dictionaries ---
+running_motion_processes = {}
+active_recordings = {}
 
 # --- Database Setup ---
 def get_db_url():
@@ -35,7 +35,7 @@ engine = sqlalchemy.create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# --- Simplified Models (FIXED) ---
+# --- Simplified Models ---
 class Camera(Base):
     __tablename__ = "cameras"
     id = Column(Integer, primary_key=True)
@@ -46,13 +46,11 @@ class Camera(Base):
     owner_id = Column(Integer, ForeignKey("users.id"))
     motion_type = Column(String, default="off")
     motion_roi = Column(String, nullable=True) 
-    events = relationship("Event", back_populates="camera")
     owner = relationship("User", back_populates="cameras")
 
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
-    events = relationship("Event", back_populates="owner")
     cameras = relationship("Camera", back_populates="owner")
 
 class Event(Base):
@@ -65,19 +63,137 @@ class Event(Base):
     thumbnail_path = Column(String, nullable=True)
     camera_id = Column(Integer, ForeignKey("cameras.id"))
     user_id = Column(Integer, ForeignKey("users.id"))
-    camera = relationship("Camera", back_populates="events")
-    owner = relationship("User", back_populates="events")
 
-# Ensure tables exist before trying to query them.
-Base.metadata.create_all(bind=engine)
+# 'backend' service manages the schema
+# Base.metadata.create_all(bind=engine) 
 
-# --- Global Dictionaries ---
-camera_processors = {}
-is_recording = {}
 
-# --- Thumbnail Generation Function ---
+# ====================================================================
+#                 Internal API (Receives webhooks from 'motion')
+# ====================================================================
+
+app = FastAPI()
+
+@app.post("/start_record/{camera_id}")
+async def start_record_webhook(camera_id: int):
+    log.info(f"[{camera_id}] Received motion start webhook from 'motion' daemon")
+    
+    if camera_id in active_recordings:
+        log.warning(f"[{camera_id}] Already recording, ignoring duplicate start signal.")
+        return {"message": "Already recording"}
+        
+    db = SessionLocal()
+    try:
+        camera = db.query(Camera).filter(Camera.id == camera_id).first()
+        if not camera:
+            log.error(f"[{camera_id}] Camera not found in database!")
+            raise HTTPException(status_code=404, detail="Camera not found")
+        
+        rtsp_url = camera.rtsp_url 
+        now = datetime.now(timezone.utc)
+        
+        base_filename = f"event_{camera.id}_{now.strftime('%Y%m%d-%H%M%S')}"
+        video_filename = f"{base_filename}.mp4"
+        thumb_filename = f"{base_filename}.jpg"
+        
+        video_db_path = f"recordings/{video_filename}" 
+        video_abs_path = f"/{video_db_path}"       
+        thumb_db_path = f"recordings/{thumb_filename}"
+        
+        db_event = Event(
+            reason="motion (active)",
+            video_path=video_db_path,
+            camera_id=camera.id,
+            user_id=camera.owner_id,
+            start_time=now,
+            thumbnail_path=thumb_db_path
+        )
+        db.add(db_event)
+        db.commit()
+        db.refresh(db_event)
+        log.info(f"[{camera_id}] Created Event {db_event.id}. Recording to {video_abs_path}")
+        
+        # --- THIS IS THE FIX ---
+        ffmpeg_cmd = [
+            'ffmpeg',
+            '-rtsp_transport', 'tcp',
+            '-i', rtsp_url,
+            '-c:v', 'copy',
+            '-c:a', 'copy', # Changed 'aac' to 'copy' (to safely copy audio if it exists)
+            '-movflags', 'frag_keyframe+empty_moov',
+            '-f', 'mp4',
+            video_abs_path
+        ]
+        # --- END OF FIX ---
+
+        process = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        active_recordings[camera_id] = {
+            "process": process,
+            "event_id": db_event.id,
+            "video_path": video_abs_path,
+            "thumb_path": f"/{thumb_db_path}"
+        }
+        return {"message": f"Recording started for event {db_event.id}"}
+        
+    except Exception as e:
+        log.error(f"[{camera_id}] ERROR starting record: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+@app.post("/stop_record/{camera_id}")
+async def stop_record_webhook(camera_id: int):
+    log.info(f"[{camera_id}] Received motion end webhook from 'motion' daemon")
+    
+    if camera_id not in active_recordings:
+        log.warning(f"[{camera_id}] No active recording found to stop.")
+        return {"message": "No active recording to stop"}
+        
+    recording = active_recordings.pop(camera_id)
+    
+    try:
+        recording["process"].terminate()
+        stdout, stderr = recording["process"].communicate(timeout=10)
+        log.info(f"[{camera_id}] FFmpeg process terminated for Event {recording['event_id']}")
+        
+        # Check if ffmpeg wrote an error
+        stderr_output = stderr.decode('utf-8')
+        if "No such file or directory" in stderr_output or "Error" in stderr_output:
+             log.error(f"[{camera_id}] FFmpeg recording process failed: {stderr_output}")
+             # Don't try to create a thumbnail if the file failed
+             return {"message": "Recording process failed"}
+
+    except Exception as e:
+        log.error(f"[{camera_id}] Error terminating ffmpeg: {e}. Killing.")
+        recording["process"].kill()
+
+    db = SessionLocal()
+    try:
+        event = db.query(Event).filter(Event.id == recording["event_id"]).first()
+        if event:
+            event.end_time = datetime.now(timezone.utc)
+            db.commit()
+            log.info(f"[{camera_id}] Updated end_time for Event {event.id}")
+            
+            thumb_thread = Thread(
+                target=create_thumbnail, 
+                args=(recording["video_path"], recording["thumb_path"]),
+                daemon=True
+            )
+            thumb_thread.start()
+        
+        return {"message": f"Recording stopped for event {event.id}"}
+    except Exception as e:
+        log.error(f"[{camera_id}] ERROR updating event end_time: {e}")
+        db.rollback()
+        return {"message": "Error stopping recording"}
+    finally:
+        db.close()
+
 def create_thumbnail(video_path, thumb_path):
     try:
+        time.sleep(1)
         log.info(f"Generating thumbnail for {video_path}...")
         ffmpeg_cmd = [
             'ffmpeg',
@@ -92,355 +208,164 @@ def create_thumbnail(video_path, thumb_path):
         stdout, stderr = process.communicate()
         if process.returncode != 0:
             log.error(f"Failed to create thumbnail: {stderr.decode()}")
-            return False
-        log.info(f"Successfully created thumbnail: {thumb_path}")
-        return True
+        else:
+            log.info(f"Successfully created thumbnail: {thumb_path}")
     except Exception as e:
         log.error(f"Exception creating thumbnail: {e}")
+
+# ====================================================================
+#                 Mask & Config Generation (The "Translator")
+# ====================================================================
+
+def generate_mask_file(roi_string: str, mask_path: str):
+    try:
+        mask = np.zeros((10, 10), dtype=np.uint8)
+        
+        if roi_string:
+            selected_cells = set(int(i) for i in roi_string.split(',') if i)
+            
+            for cell_id in selected_cells:
+                if 0 <= cell_id < 100:
+                    row = cell_id // 10
+                    col = cell_id % 10
+                    mask[row, col] = 255
+        
+        with open(mask_path, 'wb') as f:
+            f.write(b"P5\n")
+            f.write(b"10 10\n")
+            f.write(b"255\n")
+            f.write(mask.tobytes())
+            
+        log.info(f"Generated motion mask file at {mask_path}")
+        return True
+        
+    except Exception as e:
+        log.error(f"Failed to generate mask file: {e}")
         return False
 
-# --- FFMPEG Recording Function ---
-def start_ffmpeg_record(camera):
-    path = camera.path
-    rtsp_url = camera.rtsp_url 
-    
-    if is_recording.get(path, False):
-        log.info(f"[{path}] Already recording, skipping.")
-        return
 
-    log.info(f"[{path}] Starting recording...")
-    is_recording[path] = True
-
-    db = SessionLocal()
-    try:
-        now = datetime.now(timezone.utc)
-        
-        base_filename = f"event_{camera.id}_{now.strftime('%Y%m%d-%H%M%S')}"
-        video_filename = f"{base_filename}.mp4"
-        thumb_filename = f"{base_filename}.jpg"
-        
-        video_db_path = f"recordings/{video_filename}" 
-        video_abs_path = f"/{video_db_path}"       
-        
-        thumb_db_path = f"recordings/{thumb_filename}"
-        thumb_abs_path = f"/{thumb_db_path}"
-
-        db_event = Event(
-            reason="motion (active)",
-            video_path=video_db_path,
-            camera_id=camera.id,
-            user_id=camera.owner_id,
-            start_time=now
-        )
-        db.add(db_event)
-        db.commit()
-        db.refresh(db_event)
-        log.info(f"[{path}] Created Event {db_event.id}. Recording to {video_abs_path}")
-        
-        ffmpeg_cmd = [
-            'ffmpeg',
-            '-rtsp_transport', 'tcp',
-            '-i', rtsp_url,
-            '-c:v', 'copy',
-            '-c:a', 'aac',
-            '-movflags', 'frag_keyframe+empty_moov',
-            '-f', 'mp4',
-            '-t', '60',
-            video_abs_path
-        ]
-
-        process = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        stdout, stderr = process.communicate() 
-
-        if process.returncode != 0:
-            log.error(f"[{path}] ERROR: FFmpeg failed: {stderr.decode()}")
-            raise Exception("FFmpeg failed")
-
-        log.info(f"[{path}] Finished recording. Updating DB.")
-        
-        event_to_update = db.query(Event).filter(Event.id == db_event.id).first()
-        if event_to_update:
-            event_to_update.end_time = datetime.now(timezone.utc)
-            
-            if create_thumbnail(video_abs_path, thumb_abs_path):
-                event_to_update.thumbnail_path = thumb_db_path
-            
-            db.commit()
-        
-    except Exception as e:
-        log.error(f"[{path}] ERROR during recording: {e}")
-        if 'db_event' in locals() and db_event.id:
-            db.rollback()
-            event_to_delete = db.query(Event).filter(Event.id == db_event.id).first()
-            if event_to_delete:
-                db.delete(event_to_delete)
-                db.commit()
-    finally:
-        is_recording[path] = False
-        db.close()
-
-# --- Get stream dimensions with ffprobe ---
-def get_stream_dimensions(rtsp_url):
-    log.info(f"Probing stream dimensions for: {rtsp_url}")
-    ffprobe_cmd = [
-        'ffprobe',
-        '-v', 'error',
-        '-rtsp_transport', 'tcp', 
-        '-select_streams', 'v:0',
-        '-show_entries', 'stream=width,height',
-        '-of', 'csv=p=0:nk=1',
-        rtsp_url
-    ]
-    try:
-        process = subprocess.Popen(ffprobe_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout, stderr = process.communicate(timeout=10) 
-        if process.returncode != 0:
-            log.error(f"ffprobe failed: {stderr.decode()}")
-            return None, None
-            
-        dims = stdout.decode().strip().split(',')
-        if len(dims) == 2:
-            return int(dims[0]), int(dims[1])
-        else:
-            log.error(f"Unexpected ffprobe output: {stdout.decode()}")
-            return None, None
-    except Exception as e:
-        log.error(f"Exception in get_stream_dimensions: {e}")
-        return None, None
-
-
-# --- Motion Detection Processor ---
-def process_camera(camera, stop_event):
-    path = camera.path
+def generate_motion_conf(camera, conf_path, mask_path):
     rtsp_url = camera.rtsp_substream_url if camera.rtsp_substream_url else camera.rtsp_url
     
-    try:
-        roi_set = set(int(i) for i in camera.motion_roi.split(',') if i)
-    except (AttributeError, ValueError):
-        roi_set = set()
-    
-    log.info(f"[{path}] Starting motion detection for: {rtsp_url}")
-
-    if not roi_set:
-        log.warning(f"[{path}] No motion ROI set. Motion will not be detected.")
+    has_mask = False
+    if camera.motion_roi:
+        if generate_mask_file(camera.motion_roi, mask_path):
+            has_mask = True
     else:
-        log.info(f"[{path}] Monitoring {len(roi_set)} ROI cells.")
-
-    W, H = get_stream_dimensions(rtsp_url)
-    if W is None or H is None:
-        log.error(f"[{path}] Could not get stream dimensions. Aborting thread.")
-        return
-
-    log.info(f"[{path}] Stream dimensions detected: {W}x{H}")
-
-    ffmpeg_cmd = [
-        'ffmpeg',
-        '-rtsp_transport', 'tcp',
-        '-probesize', '32',
-        '-analyzeduration', '0',
-        '-fflags', 'nobuffer',
-        '-i', rtsp_url,
-        '-f', 'rawvideo',      
-        '-pix_fmt', 'bgr24',   
-        '-vcodec', 'rawvideo',
-        '-an', '-sn',
-        '-'
-    ]
+        log.info(f"[{camera.id}] No ROI set, watching full frame.")
     
-    p = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    
-    avg_frame = None
-    last_record_time = 0
-    RECORD_COOLDOWN = 60
-    
-    frame_size = W * H * 3
-    cell_width = W // 10
-    cell_height = H // 10
-    
-    last_analysis_time = 0
+    config_content = f"""
+daemon off
+setup_mode off
+log_level 6
+log_type file
+log_file /var/log/motion/{camera.id}.log
 
+netcam_url {rtsp_url}
+rtsp_transport tcp
+
+# Webhook commands
+on_event_start curl -X POST http://localhost:8001/start_record/{camera.id}
+on_event_end curl -X POST http://localhost:8001/stop_record/{camera.id}
+
+{"mask_file " + mask_path if has_mask else ""}
+
+# Detection settings
+threshold 1500
+despeckle Eedl
+minimum_motion_frames 2
+event_gap 10
+pre_capture 0
+post_capture 0
+
+# Disable 'motion's built-in recording
+output_pictures off
+output_debug_pictures off
+ffmpeg_output_movies off
+ffmpeg_output_debug_movies off
+"""
+    
     try:
-        while not stop_event.is_set():
-            in_bytes = p.stdout.read(frame_size)
-            
-            if not in_bytes or len(in_bytes) != frame_size:
-                log.warning(f"[{path}] Stream ended or pipe broke. Retrying...")
-                p.kill() 
-                time.sleep(5)
-                p = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-                avg_frame = None 
-                continue
-            
-            now = time.time()
-            if now - last_analysis_time < 1.0: # 1.0 second
-                continue 
-            
-            last_analysis_time = now
-
-            frame = np.frombuffer(in_bytes, dtype=np.uint8).reshape((H, W, 3))
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            gray = cv2.GaussianBlur(gray, (21, 21), 0)
-
-            if avg_frame is None:
-                avg_frame = gray.copy().astype("float")
-                continue
-
-            cv2.accumulateWeighted(gray, avg_frame, 0.5)
-            frame_delta = cv2.absdiff(gray, cv2.convertScaleAbs(avg_frame))
-            thresh = cv2.threshold(frame_delta, 10, 255, cv2.THRESH_BINARY)[1]
-            thresh = cv2.dilate(thresh, None, iterations=2)
-            
-            contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            # ========================================================
-            # --- BEGIN REPLACEMENT: Bounding Box Overlap Logic ---
-            # ========================================================
-            motion_detected = False
-            if roi_set:
-                for c in contours:
-                    if cv2.contourArea(c) < 100: # Filter out tiny noise
-                        continue
-                    
-                    # 1. Get the bounding box of the motion
-                    (x, y, w, h) = cv2.boundingRect(c)
-                    
-                    # 2. Find which grid cells this box touches
-                    start_col = max(0, min(x // cell_width, 9))
-                    end_col = max(0, min((x + w) // cell_width, 9))
-                    start_row = max(0, min(y // cell_height, 9))
-                    end_row = max(0, min((y + h) // cell_height, 9))
-
-                    # 3. Check if ANY of those cells are in our ROI
-                    found = False
-                    for row in range(start_row, end_row + 1):
-                        for col in range(start_col, end_col + 1):
-                            cell_id = (row * 10) + col
-                            if cell_id in roi_set:
-                                motion_detected = True
-                                found = True
-                                break
-                        if found:
-                            break
-                    
-                    if found:
-                        break # Found motion, no need to check other contours
-            # ========================================================
-            # --- END REPLACEMENT ---
-            # ========================================================
-            
-            is_currently_recording = is_recording.get(path, False)
-
-            if motion_detected and not is_currently_recording:
-                if (now - last_record_time) > RECORD_COOLDOWN:
-                    log.info(f"[{path}] Motion detected! Triggering recording.")
-                    last_record_time = now
-                    record_thread = Thread(target=start_ffmpeg_record, args=(camera,), daemon=True)
-                    record_thread.start()
-
+        with open(conf_path, "w") as f:
+            f.write(config_content)
+        return True
     except Exception as e:
-        log.error(f"[{path}] ERROR in processing loop: {e}")
-    finally:
-        log.info(f"[{path}] Stopping motion detection. Killing ffmpeg process.")
-        p.kill() 
+        log.error(f"[{camera.id}] Failed to write motion.conf: {e}")
+        return False
 
+# ====================================================================
+#                 Process Manager (Polls DB)
+# ====================================================================
 
-# --- Auto-Cleanup Function ---
-def cleanup_old_events(db: SessionLocal):
-    try:
-        RETENTION_DAYS = 30
-        cutoff_date = datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)
-        
-        events_to_delete = db.query(Event).filter(Event.start_time < cutoff_date).all()
-        
-        if not events_to_delete:
-            return
-
-        log.info(f"--- CLEANUP: Found {len(events_to_delete)} events older than {RETENTION_DAYS} days ---")
-        
-        deleted_count = 0
-        for event in events_to_delete:
-            try:
-                abs_video_path = f"/{event.video_path}"
-                if os.path.exists(abs_video_path):
-                    os.remove(abs_video_path)
-                    log.info(f"--- CLEANUP: Deleted file {abs_video_path} ---")
-                
-                if event.thumbnail_path:
-                    abs_thumb_path = f"/{event.thumbnail_path}"
-                    if os.path.exists(abs_thumb_path):
-                        os.remove(abs_thumb_path)
-                        log.info(f"--- CLEANUP: Deleted thumb {abs_thumb_path} ---")
-                
-                db.delete(event)
-                deleted_count += 1
-
-            except Exception as e:
-                log.error(f"--- CLEANUP: Error deleting event {event.id}: {e} ---")
-                db.rollback() 
-                
-        db.commit()
-        log.info(f"--- CLEANUP: Successfully deleted {deleted_count} events ---")
-
-    except Exception as e:
-        log.error(f"--- CLEANUP: Fatal error in cleanup task: {e} ---")
-        db.rollback()
-
-
-# --- Main Loop ---
-def main_loop():
-    log.info("--- Motion Detector Service Started ---")
-    from threading import Event as ThreadEvent
-
+def process_manager_loop():
+    log.info("--- Motion Process Manager Started ---")
+    
     while True:
         db = SessionLocal()
         try:
             active_cameras = db.query(Camera).filter(Camera.motion_type == "active").all()
-            active_camera_paths = {c.path for c in active_cameras}
+            active_camera_ids = {c.id for c in active_cameras}
 
+            # --- Start new 'motion' processes ---
             for cam in active_cameras:
-                if cam.path in camera_processors:
-                    old_roi = camera_processors[cam.path]["roi_set"]
-                    try:
-                        new_roi_set = set(int(i) for i in cam.motion_roi.split(',') if i)
-                    except (AttributeError, ValueError):
-                        new_roi_set = set()
+                if cam.id not in running_motion_processes:
+                    log.info(f"[{cam.id}] New active camera found. Starting 'motion' daemon.")
                     
-                    if old_roi != new_roi_set:
-                        log.info(f"[{cam.path}] ROI changed. Restarting processor...")
-                        camera_processors[cam.path]["stop_event"].set()
-                        camera_processors[cam.path]["thread"].join(timeout=5)
-                        del camera_processors[cam.path]
+                    conf_path = f"/app/motion_confs/{cam.id}.conf"
+                    mask_path = f"/app/motion_confs/{cam.id}_mask.pgm" 
+                    
+                    if generate_motion_conf(cam, conf_path, mask_path):
+                        motion_cmd = ['motion', '-c', conf_path]
+                        process = subprocess.Popen(motion_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                        running_motion_processes[cam.id] = process
+                    else:
+                        log.error(f"[{cam.id}] Could not start motion, config generation failed.")
 
-                if cam.path not in camera_processors:
-                    log.info(f"Found new active camera: {cam.name}")
-                    stop_event = ThreadEvent()
-                    thread = Thread(target=process_camera, args=(cam, stop_event), daemon=True)
+            # --- Stop old 'motion' processes ---
+            for cam_id in list(running_motion_processes.keys()):
+                if cam_id not in active_camera_ids:
+                    log.info(f"[{cam_id}] Camera no longer active. Stopping 'motion' daemon.")
+                    process = running_motion_processes.pop(cam_id)
+                    process.terminate()
+                    
+                    if cam_id in active_recordings:
+                        log.warning(f"[{cam_id}] Stopping dangling recording.")
+                        try:
+                            subprocess.run(["curl", "-X", "POST", f"http://localhost:8001/stop_record/{cam_id}"], timeout=5)
+                        except Exception as e:
+                            log.error(f"[{cam_id}] Failed to stop dangling recording via curl: {e}")
+                            
                     try:
-                        current_roi = set(int(i) for i in cam.motion_roi.split(',') if i)
-                    except (AttributeError, ValueError):
-                        current_roi = set()
-                    camera_processors[cam.path] = {
-                        "thread": thread, 
-                        "stop_event": stop_event,
-                        "roi_set": current_roi
-                    }
-                    thread.start()
+                        if os.path.exists(f"/app/motion_confs/{cam_id}.conf"):
+                            os.remove(f"/app/motion_confs/{cam_id}.conf")
+                        if os.path.exists(f"/app/motion_confs/{cam_id}_mask.pgm"):
+                            os.remove(f"/app/motion_confs/{cam_id}_mask.pgm")
+                    except Exception as e:
+                        log.error(f"[{cam_id}] Failed to clean up config/mask files: {e}")
 
-            for path in list(camera_processors.keys()):
-                if path not in active_camera_paths:
-                    log.info(f"Camera no longer active: {path}. Stopping thread...")
-                    camera_processors[path]["stop_event"].set()
-                    camera_processors[path]["thread"].join(timeout=5)
-                    del camera_processors[path]
-            
-            cleanup_old_events(db)
 
         except Exception as e:
-            log.error(f"ERROR in main loop: {e}")
+            log.error(f"ERROR in process_manager_loop: {e}")
         finally:
             db.close()
         
         time.sleep(30)
 
+# ====================================================================
+#                 Main Entrypoint
+# ====================================================================
+
 if __name__ == "__main__":
-    main_loop()
+    try:
+        os.makedirs("/app/motion_confs", exist_ok=True)
+        
+        # Start the process manager in a background thread
+        manager_thread = Thread(target=process_manager_loop, daemon=True)
+        manager_thread.start()
+        
+        # Start the API listener in the main thread
+        log.info("--- Starting Internal Webhook API on port 8001 ---")
+        uvicorn.run(app, host="0.0.0.0", port=8001)
+        
+    except Exception as e:
+        log.error(f"Fatal error in main entrypoint: {e}")

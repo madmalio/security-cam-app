@@ -32,8 +32,6 @@ services:
     secrets:
       - db_url_secret
       - jwt_secret_key
-      - mediamtx_admin_pass # <-- ADDED
-      - mediamtx_viewer_pass # <-- ADDED
     depends_on:
       db:
         condition: service_healthy
@@ -88,12 +86,6 @@ services:
       - cam_net
     security_opt:
       - no-new-privileges:true
-    environment: # <-- ADDED THIS BLOCK
-      - MTX_API_INTERNAL_USERS_ADMIN_PASS_FILE=/run/secrets/mediamtx_admin_pass
-      - MTX_API_INTERNAL_USERS_VIEWER_PASS_FILE=/run/secrets/mediamtx_viewer_pass
-    secrets: # <-- ADDED THIS BLOCK
-      - mediamtx_admin_pass
-      - mediamtx_viewer_pass
 
   # 5. Motion Detector Service
   motion-detector:
@@ -111,7 +103,6 @@ services:
       - db_url_secret
     security_opt:
       - no-new-privileges:true
-    user: "appuser"
     volumes:
       - recordings_data:/recordings
 
@@ -130,7 +121,3 @@ secrets:
     file: ./secret_key.txt
   db_url_secret:
     file: ./db_url.txt
-  mediamtx_admin_pass: # <-- ADDED
-    file: ./mediamtx_admin_pass.txt
-  mediamtx_viewer_pass: # <-- ADDED
-    file: ./mediamtx_viewer_pass.txt

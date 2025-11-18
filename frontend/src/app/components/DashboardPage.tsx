@@ -30,7 +30,7 @@ import FullscreenGridView from "./FullscreenGridView";
 import AddCameraModal from "./AddCameraModal";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import SettingsPage from "./SettingsPage";
-import EventsPage from "./EventsPage";
+import EventsPage from "./EventsPage"; // <-- 1. This is what we're updating
 
 type CurrentView = "dashboard" | "settings" | "events";
 
@@ -122,15 +122,18 @@ export default function DashboardPage() {
     }
   }, [api, selectedCamera]);
 
-  // --- THIS IS THE FIX ---
   useEffect(() => {
-    // Fetch cameras if we are on the dashboard OR the settings page,
-    // as both need the full camera list.
     if (currentView === "dashboard" || currentView === "settings") {
       fetchCameras();
     }
+    // --- THIS IS THE FIX ---
+    // We also need to fetch cameras if we go *directly* to the events page
+    // so we can pass them to the tabs.
+    if (currentView === "events") {
+      fetchCameras();
+    }
+    // --- END FIX ---
   }, [currentView, fetchCameras]);
-  // --- END FIX ---
 
   const toggleMosaicFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -225,7 +228,10 @@ export default function DashboardPage() {
           <SettingsPage cameras={cameras} onCamerasUpdate={fetchCameras} />
         );
       case "events":
-        return <EventsPage />;
+        // --- THIS IS THE CHANGE ---
+        // Pass the camera list to the EventsPage
+        return <EventsPage cameras={cameras} />;
+      // --- END CHANGE ---
       default:
         return null;
     }
