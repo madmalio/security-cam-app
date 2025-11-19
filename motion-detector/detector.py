@@ -12,6 +12,7 @@ import logging
 import uvicorn
 from fastapi import FastAPI, HTTPException
 import numpy as np
+# --- REMOVED: import models --- 
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO,
@@ -107,9 +108,7 @@ async def start_record_webhook(camera_id: int):
             camera_id=camera.id,
             user_id=camera.owner_id,
             start_time=now,
-            # --- FIX 1: Don't set thumbnail_path yet! ---
-            thumbnail_path=None 
-            # ------------------------------------------
+            thumbnail_path=None # Don't set thumb yet
         )
         db.add(db_event)
         db.commit()
@@ -135,8 +134,8 @@ async def start_record_webhook(camera_id: int):
             "process": process,
             "event_id": db_event.id,
             "video_path": video_abs_path,
-            "thumb_path": thumb_db_path,      # We keep the path here to use later
-            "thumb_abs_path": f"/{thumb_db_path}" # Absolute path for ffmpeg
+            "thumb_path": thumb_db_path,
+            "thumb_abs_path": f"/{thumb_db_path}"
         }
         return {"message": f"Recording started for event {db_event.id}"}
         
@@ -179,8 +178,6 @@ async def stop_record_webhook(camera_id: int):
             db.commit()
             log.info(f"[{camera_id}] Updated end_time for Event {event.id}")
             
-            # --- FIX 2: Generate Thumbnail AND Update DB asynchronously ---
-            # We pass the event_id so the thread can update the DB on success
             thumb_thread = Thread(
                 target=finalize_event, 
                 args=(
@@ -192,7 +189,6 @@ async def stop_record_webhook(camera_id: int):
                 daemon=True
             )
             thumb_thread.start()
-            # ------------------------------------------------------------
         
         return {"message": f"Recording stopped for event {event.id}"}
     except Exception as e:
@@ -202,10 +198,8 @@ async def stop_record_webhook(camera_id: int):
     finally:
         db.close()
 
-# --- NEW: Helper to generate thumb AND update DB ---
 def finalize_event(event_id, video_path, thumb_abs_path, thumb_db_path):
     if create_thumbnail(video_path, thumb_abs_path):
-        # If generation worked, NOW we tell the database
         db = SessionLocal()
         try:
             event = db.query(Event).filter(Event.id == event_id).first()
@@ -217,7 +211,6 @@ def finalize_event(event_id, video_path, thumb_abs_path, thumb_db_path):
             log.error(f"[{event_id}] Failed to update thumbnail in DB: {e}")
         finally:
             db.close()
-# --------------------------------------------------
 
 def create_thumbnail(video_path, thumb_path):
     try:
@@ -243,8 +236,75 @@ def create_thumbnail(video_path, thumb_path):
         log.error(f"Exception creating thumbnail: {e}")
         return False
 
-# ... (Rest of file: generate_mask_file, generate_motion_conf, process_manager_loop, main) ...
-# (Keep these exactly as they were in the previous version)
+# ====================================================================
+#                 24/7 Continuous Recording Logic
+# ====================================================================
+
+def start_continuous_recording(camera):
+    output_dir = f"/recordings/continuous/{camera.id}"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    segment_time = "900"
+    output_pattern = f"{output_dir}/%Y%m%d-%H%M%S.mp4"
+
+    log.info(f"[{camera.id}] Starting 24/7 continuous recording...")
+
+    ffmpeg_cmd = [
+        'ffmpeg',
+        '-rtsp_transport', 'tcp',
+        '-stimeout', '5000000', 
+        '-i', camera.rtsp_url,
+        '-c:v', 'copy',
+        '-c:a', 'copy',
+        '-f', 'segment',
+        '-segment_time', segment_time,
+        '-strftime', '1',
+        '-reset_timestamps', '1',
+        output_pattern
+    ]
+    
+    process = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return process
+
+# ====================================================================
+#                 Disk Manager (Auto-Cleanup)
+# ====================================================================
+
+def disk_manager_loop():
+    log.info("--- Disk Manager Started ---")
+    MIN_FREE_BYTES = 10 * 1024 * 1024 * 1024 
+    TARGET_FREE_BYTES = 15 * 1024 * 1024 * 1024 
+
+    while True:
+        try:
+            usage = shutil.disk_usage("/recordings")
+            
+            if usage.free < MIN_FREE_BYTES:
+                log.warning(f"LOW DISK SPACE: {usage.free / 1024**3:.2f} GB free. Starting cleanup...")
+                files = glob.glob("/recordings/continuous/**/*.mp4", recursive=True)
+                files.sort(key=os.path.getmtime)
+                
+                deleted_count = 0
+                freed_bytes = 0
+                
+                for file_path in files:
+                    try:
+                        size = os.path.getsize(file_path)
+                        os.remove(file_path)
+                        deleted_count += 1
+                        freed_bytes += size
+                        
+                        if (usage.free + freed_bytes) > TARGET_FREE_BYTES:
+                            break
+                    except Exception as e:
+                        log.error(f"Error deleting file {file_path}: {e}")
+                
+                log.info(f"Cleanup complete. Deleted {deleted_count} files, freed {freed_bytes / 1024**3:.2f} GB.")
+            
+        except Exception as e:
+            log.error(f"Error in disk_manager_loop: {e}")
+        
+        time.sleep(60) 
 
 # ====================================================================
 #                 Mask & Config Generation
@@ -318,47 +378,9 @@ ffmpeg_output_debug_movies off
         return False
 
 # ====================================================================
-#                 Disk Manager
-# ====================================================================
-def disk_manager_loop():
-    log.info("--- Disk Manager Started ---")
-    MIN_FREE_BYTES = 10 * 1024 * 1024 * 1024 
-    TARGET_FREE_BYTES = 15 * 1024 * 1024 * 1024 
-
-    while True:
-        try:
-            usage = shutil.disk_usage("/recordings")
-            
-            if usage.free < MIN_FREE_BYTES:
-                log.warning(f"LOW DISK SPACE: {usage.free / 1024**3:.2f} GB free. Starting cleanup...")
-                files = glob.glob("/recordings/continuous/**/*.mp4", recursive=True)
-                files.sort(key=os.path.getmtime)
-                
-                deleted_count = 0
-                freed_bytes = 0
-                
-                for file_path in files:
-                    try:
-                        size = os.path.getsize(file_path)
-                        os.remove(file_path)
-                        deleted_count += 1
-                        freed_bytes += size
-                        
-                        if (usage.free + freed_bytes) > TARGET_FREE_BYTES:
-                            break
-                    except Exception as e:
-                        log.error(f"Error deleting file {file_path}: {e}")
-                
-                log.info(f"Cleanup complete. Deleted {deleted_count} files, freed {freed_bytes / 1024**3:.2f} GB.")
-            
-        except Exception as e:
-            log.error(f"Error in disk_manager_loop: {e}")
-        
-        time.sleep(60) 
-
-# ====================================================================
 #                 Process Manager
 # ====================================================================
+
 def process_manager_loop():
     log.info("--- Process Manager Started ---")
     
@@ -367,11 +389,9 @@ def process_manager_loop():
         try:
             cameras = db.query(Camera).all()
             
-            # 1. Manage Motion Detection Processes
             active_motion_cams = [c for c in cameras if c.motion_type == "active"]
             active_motion_ids = {c.id for c in active_motion_cams}
 
-            # Start new motion
             for cam in active_motion_cams:
                 if cam.id not in running_motion_processes:
                     log.info(f"[{cam.id}] Starting 'motion' daemon.")
@@ -383,7 +403,6 @@ def process_manager_loop():
                         p = subprocess.Popen(motion_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
                         running_motion_processes[cam.id] = p
 
-            # Stop old motion
             for cam_id in list(running_motion_processes.keys()):
                 if cam_id not in active_motion_ids:
                     log.info(f"[{cam_id}] Stopping 'motion' daemon.")
@@ -394,7 +413,6 @@ def process_manager_loop():
                             subprocess.run(["curl", "-X", "POST", f"http://localhost:8001/stop_record/{cam_id}"], timeout=5)
                          except: pass
 
-            # 2. Manage Continuous Recording Processes
             continuous_cams = [c for c in cameras if c.continuous_recording]
             continuous_ids = {c.id for c in continuous_cams}
 
@@ -421,33 +439,6 @@ def process_manager_loop():
             db.close()
         
         time.sleep(30)
-
-# ====================================================================
-#                 Main Entrypoint
-# ====================================================================
-
-def start_continuous_recording(camera):
-    output_dir = f"/recordings/continuous/{camera.id}"
-    os.makedirs(output_dir, exist_ok=True)
-    segment_time = "900"
-    output_pattern = f"{output_dir}/%Y%m%d-%H%M%S.mp4"
-
-    log.info(f"[{camera.id}] Starting 24/7 continuous recording...")
-
-    ffmpeg_cmd = [
-        'ffmpeg',
-        '-rtsp_transport', 'tcp',
-        '-i', camera.rtsp_url,
-        '-c:v', 'copy',
-        '-c:a', 'copy',
-        '-f', 'segment',
-        '-segment_time', segment_time,
-        '-strftime', '1',
-        '-reset_timestamps', '1',
-        output_pattern
-    ]
-    process = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return process
 
 if __name__ == "__main__":
     try:

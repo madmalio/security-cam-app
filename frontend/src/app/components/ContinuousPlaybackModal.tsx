@@ -2,7 +2,7 @@
 
 import React, { Fragment, useState, useEffect } from "react";
 import { Dialog, Transition } from "@headlessui/react";
-import { X, Calendar, Play, Film } from "lucide-react";
+import { X, Calendar, Play, Film, Download, Loader } from "lucide-react";
 import { Camera } from "@/app/types";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { format } from "date-fns";
@@ -19,7 +19,9 @@ interface ContinuousPlaybackModalProps {
   camera: Camera | null;
 }
 
+// --- FIX: Changed default port from 8887 to 8080 ---
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+// --------------------------------------------------
 
 const getTodayString = () => {
   const today = new Date();
@@ -38,8 +40,8 @@ export default function ContinuousPlaybackModal({
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [currentVideo, setCurrentVideo] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
 
-  // Fetch recordings when date or camera changes
   useEffect(() => {
     if (!camera || !isOpen) return;
 
@@ -52,7 +54,7 @@ export default function ContinuousPlaybackModal({
         if (!response || !response.ok) return;
         const data = await response.json();
         setRecordings(data);
-        setCurrentVideo(null); // Reset player
+        setCurrentVideo(null);
       } catch (error) {
         console.error(error);
       } finally {
@@ -64,11 +66,35 @@ export default function ContinuousPlaybackModal({
   }, [api, camera, selectedDate, isOpen]);
 
   const formatTime = (timeStr: string) => {
-    // HHMMSS -> HH:MM:SS
     return `${timeStr.slice(0, 2)}:${timeStr.slice(2, 4)}:${timeStr.slice(
       4,
       6
     )}`;
+  };
+
+  const handleDownload = async () => {
+    if (!currentVideo) return;
+    setIsDownloading(true);
+    try {
+      const response = await api(
+        `/api/download?path=${encodeURIComponent(currentVideo)}`
+      );
+      if (!response || !response.ok) throw new Error("Download failed");
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = currentVideo.split("/").pop() || "recording.mp4";
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   return (
@@ -97,8 +123,7 @@ export default function ContinuousPlaybackModal({
               leaveFrom="opacity-100 scale-100"
               leaveTo="opacity-0 scale-95"
             >
-              <Dialog.Panel className="w-full max-w-5xl transform overflow-hidden rounded-2xl bg-white text-left shadow-xl transition-all dark:bg-zinc-900">
-                {/* Header */}
+              <Dialog.Panel className="w-full max-w-6xl transform overflow-hidden rounded-2xl bg-white text-left shadow-xl transition-all dark:bg-zinc-900">
                 <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-zinc-800">
                   <div>
                     <Dialog.Title className="text-lg font-medium text-gray-900 dark:text-white">
@@ -124,25 +149,45 @@ export default function ContinuousPlaybackModal({
                   </div>
                 </div>
 
-                <div className="flex h-[600px] flex-col md:flex-row">
-                  {/* Left: Video Player */}
-                  <div className="flex-1 bg-black flex items-center justify-center">
-                    {currentVideo ? (
-                      <video
-                        src={`${API_URL}/recordings/${currentVideo}`}
-                        controls
-                        autoPlay
-                        className="h-full w-full"
-                      />
-                    ) : (
-                      <div className="text-center text-gray-500">
-                        <Film className="mx-auto h-12 w-12 mb-2 opacity-50" />
-                        <p>Select a clip to play</p>
+                <div className="flex h-[650px] flex-col md:flex-row">
+                  {/* Video Player */}
+                  <div className="flex-1 bg-black flex flex-col">
+                    <div className="flex-1 flex items-center justify-center relative">
+                      {currentVideo ? (
+                        <video
+                          src={`${API_URL}/recordings/${currentVideo}`}
+                          controls
+                          autoPlay
+                          className="max-h-full max-w-full"
+                        />
+                      ) : (
+                        <div className="text-center text-gray-500">
+                          <Film className="mx-auto h-12 w-12 mb-2 opacity-50" />
+                          <p>Select a clip to play</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Player Footer / Download */}
+                    {currentVideo && (
+                      <div className="bg-zinc-800 p-3 flex justify-end border-t border-zinc-700">
+                        <button
+                          onClick={handleDownload}
+                          disabled={isDownloading}
+                          className="flex items-center gap-2 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          {isDownloading ? (
+                            <Loader className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Download className="h-4 w-4" />
+                          )}
+                          {isDownloading ? "Downloading..." : "Download Clip"}
+                        </button>
                       </div>
                     )}
                   </div>
 
-                  {/* Right: Playlist */}
+                  {/* Playlist */}
                   <div className="w-full md:w-80 border-l border-gray-200 bg-gray-50 dark:border-zinc-800 dark:bg-zinc-900 overflow-y-auto">
                     <div className="p-4">
                       <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-gray-500">

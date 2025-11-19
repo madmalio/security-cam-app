@@ -10,11 +10,12 @@ import logging
 import asyncio
 import hashlib
 import uuid
-import time  # <-- THIS WAS MISSING
+import time
 import shutil
 import psutil
 from datetime import datetime, timezone, timedelta, date 
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 import os
 
 # Import our own modules
@@ -682,42 +683,36 @@ async def delete_event(
         log.error(f"--- Error deleting event {event_id}: {e} ---")
         raise HTTPException(status_code=500, detail="Failed to delete event")
 
-# --- NEW: Endpoint to list continuous recordings ---
+# --- Endpoint to list continuous recordings ---
 @app.get("/api/cameras/{camera_id}/recordings")
 async def get_continuous_recordings(
     camera_id: int,
-    date_str: str, # Expected format: YYYY-MM-DD
+    date_str: str, 
     current_user: models.User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db)
 ):
-    # 1. Verify camera ownership
     camera = db.query(models.Camera).filter(models.Camera.id == camera_id, models.Camera.owner_id == current_user.id).first()
     if not camera:
         raise HTTPException(status_code=404, detail="Camera not found")
 
-    # 2. Construct directory path
     recordings_dir = f"/recordings/continuous/{camera_id}"
     
     if not os.path.exists(recordings_dir):
         return []
 
-    # 3. Filter files by date
-    # Filename format: YYYYMMDD-HHMMSS.mp4
-    target_date_prefix = date_str.replace("-", "") # e.g. 2025-11-18 -> 20251118
+    target_date_prefix = date_str.replace("-", "") 
     
     found_files = []
     try:
         for filename in os.listdir(recordings_dir):
             if filename.startswith(target_date_prefix) and filename.endswith(".mp4"):
-                # Create the web-accessible URL
                 url = f"continuous/{camera_id}/{filename}"
                 found_files.append({
                     "filename": filename,
                     "url": url,
-                    "time": filename.split("-")[1].split(".")[0] # Extract HHMMSS
+                    "time": filename.split("-")[1].split(".")[0] 
                 })
                 
-        # Sort by time (ascending)
         found_files.sort(key=lambda x: x["filename"])
         
     except Exception as e:
@@ -751,6 +746,34 @@ async def get_system_health(
     except Exception as e:
         log.error(f"Failed to get system stats: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch system health")
+
+# --- NEW: Download Endpoint ---
+@app.get("/api/download")
+async def download_recording(
+    path: str,
+    current_user: models.User = Depends(get_current_user_from_token)
+):
+    """
+    Downloads a recording file.
+    Expects 'path' to be relative to the /recordings directory.
+    """
+    if ".." in path or path.startswith("/"):
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    clean_path = path
+    if clean_path.startswith("recordings/"):
+        clean_path = clean_path.replace("recordings/", "", 1)
+        
+    full_path = os.path.join("/recordings", clean_path)
+    
+    if not os.path.exists(full_path):
+         raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(
+        path=full_path, 
+        filename=os.path.basename(full_path), 
+        media_type='application/octet-stream'
+    )
 
 # --- User/Session Endpoints ---
 @app.put("/api/users/me", response_model=User)
