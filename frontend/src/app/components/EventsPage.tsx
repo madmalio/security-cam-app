@@ -1,20 +1,36 @@
 "use client";
 
-// ... (Imports remain the same)
-import React, { useState, useEffect, useCallback, Fragment } from "react";
+import React, { useState, useEffect, Fragment } from "react";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { Event, Camera } from "@/app/types";
 import { toast } from "sonner";
-import { Loader, Video, Calendar, Tag, PlayCircle, Trash2 } from "lucide-react";
-import { format } from "date-fns";
+import {
+  Loader,
+  Video,
+  Calendar,
+  Tag,
+  PlayCircle,
+  Trash2,
+  LayoutGrid,
+  List,
+  Camera as CameraIcon,
+} from "lucide-react";
+import { format, differenceInSeconds } from "date-fns";
 import EventPlayerModal from "./EventPlayerModal";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
-import { Tab } from "@headlessui/react";
 import EventTimeline from "./EventTimeline";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
-// ... (EventCard component remains the same) ...
+// --- Helper: Calculate Duration String ---
+const getDurationString = (start: string, end: string | null) => {
+  if (!end) return "Live";
+  const diff = differenceInSeconds(new Date(end), new Date(start));
+  if (diff < 60) return `${diff}s`;
+  return `${Math.floor(diff / 60)}m ${diff % 60}s`;
+};
+
+// --- Component: Grid Card ---
 const EventCard = ({
   event,
   onPlay,
@@ -31,7 +47,7 @@ const EventCard = ({
       : null;
 
   return (
-    <div className="flex flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-zinc-700 dark:bg-zinc-800">
+    <div className="flex flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm transition-all hover:shadow-md dark:border-zinc-700 dark:bg-zinc-800">
       <div className="relative aspect-video w-full bg-gray-100 dark:bg-zinc-700">
         {thumbnailUrl ? (
           <img
@@ -45,43 +61,120 @@ const EventCard = ({
             <Video className="h-12 w-12 text-gray-400" />
           </div>
         )}
+        <div className="absolute bottom-2 right-2 rounded bg-black/70 px-1.5 py-0.5 text-xs font-medium text-white">
+          {getDurationString(event.start_time, event.end_time)}
+        </div>
       </div>
       <div className="flex-1 p-4">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-          Motion Detected
-        </h3>
-        <div className="mt-2 flex flex-col gap-1 text-sm text-gray-500 dark:text-zinc-400">
-          <span className="flex items-center gap-1.5">
-            <Calendar className="h-4 w-4" />
-            {format(new Date(event.start_time), "MMM d, 'at' h:mm a")}
-          </span>
-          <span className="flex items-center gap-1.5">
-            <Tag className="h-4 w-4" />
-            Reason: {event.reason}
+        <div className="flex items-start justify-between">
+          <div>
+            <h3 className="font-semibold text-gray-900 dark:text-white">
+              {format(new Date(event.start_time), "h:mm:ss a")}
+            </h3>
+            <p className="text-xs text-gray-500 dark:text-zinc-400">
+              {event.camera.name}
+            </p>
+          </div>
+          <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+            {event.reason}
           </span>
         </div>
       </div>
-      <div className="flex-shrink-0 flex gap-2 p-4 border-t border-gray-100 dark:border-zinc-700">
+      <div className="flex items-center justify-between border-t border-gray-100 px-4 py-3 dark:border-zinc-700">
         <button
           onClick={() => onPlay(event)}
-          className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          className="flex items-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
         >
-          <PlayCircle className="h-5 w-5" />
+          <PlayCircle className="h-4 w-4" />
           Play
         </button>
         <button
           onClick={() => onDelete(event)}
-          className="flex items-center justify-center rounded-lg p-2 text-gray-500 hover:bg-red-100 hover:text-red-600 dark:text-zinc-400 dark:hover:bg-red-900/50 dark:hover:text-red-400"
-          title="Delete Event"
+          className="text-gray-400 hover:text-red-600 dark:text-zinc-500 dark:hover:text-red-400"
+          title="Delete"
         >
-          <Trash2 className="h-5 w-5" />
+          <Trash2 className="h-4 w-4" />
         </button>
       </div>
     </div>
   );
 };
 
-// Helper: Format date for <input type="date">
+// --- Component: List Item ---
+const EventListItem = ({
+  event,
+  onPlay,
+  onDelete,
+}: {
+  event: Event;
+  onPlay: (event: Event) => void;
+  onDelete: (event: Event) => void;
+}) => {
+  const [thumbError, setThumbError] = useState(false);
+  const thumbnailUrl =
+    event.thumbnail_path && !thumbError
+      ? `${API_URL}/${event.thumbnail_path}`
+      : null;
+
+  return (
+    <div className="group flex items-center gap-4 rounded-lg border border-gray-200 bg-white p-3 shadow-sm transition-all hover:bg-gray-50 dark:border-zinc-700 dark:bg-zinc-800 dark:hover:bg-zinc-700/50">
+      {/* Thumbnail */}
+      <div className="relative h-20 w-36 flex-shrink-0 overflow-hidden rounded-md bg-gray-100 dark:bg-zinc-700">
+        {thumbnailUrl ? (
+          <img
+            src={thumbnailUrl}
+            alt="Thumbnail"
+            className="h-full w-full object-cover"
+            onError={() => setThumbError(true)}
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center">
+            <Video className="h-8 w-8 text-gray-400" />
+          </div>
+        )}
+      </div>
+
+      {/* Details */}
+      <div className="flex min-w-0 flex-1 flex-col justify-center">
+        <h4 className="truncate text-base font-semibold text-gray-900 dark:text-white">
+          {event.camera.name}
+        </h4>
+        <div className="mt-1 flex items-center gap-2">
+          <span className="inline-flex items-center rounded bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/30 dark:text-green-300">
+            {event.reason}
+          </span>
+          <span className="inline-flex items-center rounded bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-800 dark:bg-purple-900/30 dark:text-purple-300">
+            {getDurationString(event.start_time, event.end_time)}
+          </span>
+        </div>
+      </div>
+
+      {/* Time & Actions */}
+      <div className="flex flex-col items-end gap-2">
+        <span className="text-sm font-medium text-gray-900 dark:text-white">
+          {format(new Date(event.start_time), "h:mm a")}
+        </span>
+        <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          <button
+            onClick={() => onPlay(event)}
+            className="rounded p-1.5 text-blue-600 hover:bg-blue-100 dark:text-blue-400 dark:hover:bg-blue-900/30"
+            title="Play"
+          >
+            <PlayCircle className="h-5 w-5" />
+          </button>
+          <button
+            onClick={() => onDelete(event)}
+            className="rounded p-1.5 text-gray-400 hover:bg-red-100 hover:text-red-600 dark:text-zinc-500 dark:hover:bg-red-900/30 dark:hover:text-red-400"
+            title="Delete"
+          >
+            <Trash2 className="h-5 w-5" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const getTodayString = () => {
   const today = new Date();
   const offset = today.getTimezoneOffset();
@@ -98,7 +191,13 @@ export default function EventsPage({ cameras }: EventsPageProps) {
   const [events, setEvents] = useState<Event[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const [selectedTabIndex, setSelectedTabIndex] = useState(0);
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+
+  // --- FIX: Correctly define state for selectedCameraId ---
+  const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null);
+  // -------------------------------------------------------
+
+  // Allow null here to fix the "Type error" from before
   const [selectedDate, setSelectedDate] = useState<string | null>(
     getTodayString()
   );
@@ -110,9 +209,6 @@ export default function EventsPage({ cameras }: EventsPageProps) {
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const selectedCameraId =
-    selectedTabIndex === 0 ? null : cameras[selectedTabIndex - 1]?.id;
-
   useEffect(() => {
     if (!selectedDate) {
       setEvents([]);
@@ -123,29 +219,21 @@ export default function EventsPage({ cameras }: EventsPageProps) {
 
     const fetchEvents = async () => {
       setIsLoading(true);
-
       const params = new URLSearchParams();
       if (selectedCameraId) {
         params.append("camera_id", selectedCameraId.toString());
       }
+      params.append("date_str", selectedDate);
 
-      // --- FIX: Convert Local Date to UTC ISO strings ---
       const localStart = new Date(selectedDate + "T00:00:00");
       const localEnd = new Date(selectedDate + "T23:59:59.999");
-
       params.append("start_ts", localStart.toISOString());
       params.append("end_ts", localEnd.toISOString());
-      // --- END FIX ---
-
-      const query = params.toString();
 
       try {
-        const response = await api(`/api/events?${query}`);
+        const response = await api(`/api/events?${params.toString()}`);
         if (!response) return;
-
-        if (!response.ok) {
-          throw new Error("Failed to fetch events");
-        }
+        if (!response.ok) throw new Error("Failed to fetch events");
         const data: Event[] = await response.json();
         setEvents(data);
       } catch (err: any) {
@@ -155,11 +243,8 @@ export default function EventsPage({ cameras }: EventsPageProps) {
       }
     };
     fetchEvents();
-  }, [api, selectedCameraId, selectedDate, cameras]);
+  }, [api, selectedCameraId, selectedDate]);
 
-  // ... (Rest of the component stays exactly the same as before) ...
-  // (handlePlayClick, delete handlers, renderEventGrid, return statement)
-  // Just ensure the return statement includes the updated EventTimeline with the new logic.
   const handlePlayClick = (event: Event) => {
     setSelectedEvent(event);
     setIsPlayerOpen(true);
@@ -185,7 +270,6 @@ export default function EventsPage({ cameras }: EventsPageProps) {
       });
       if (!response) return;
       if (!response.ok) throw new Error("Failed to delete event");
-
       toast.success("Event deleted successfully");
       setEvents((prev) => prev.filter((e) => e.id !== eventToDelete.id));
       closeDeleteModal();
@@ -195,36 +279,48 @@ export default function EventsPage({ cameras }: EventsPageProps) {
       setIsDeleting(false);
     }
   };
-
   const handleTimelineEventClick = (eventId: number) => {
     const eventToPlay = events.find((e) => e.id === eventId);
-    if (eventToPlay) {
-      handlePlayClick(eventToPlay);
-    } else {
-      toast.error("Could not find event. It may be on a different day.");
-    }
+    if (eventToPlay) handlePlayClick(eventToPlay);
+    else toast.error("Could not find event. It may be on a different day.");
   };
 
-  const renderEventGrid = (eventList: Event[]) => {
-    if (eventList.length === 0) {
+  const renderContent = () => {
+    if (events.length === 0) {
       return (
-        <div className="flex w-full justify-center">
-          <div className="mt-12 w-full max-w-2xl text-center rounded-lg border border-dashed border-gray-300 dark:border-zinc-700 p-12">
-            <Video className="mx-auto h-12 w-12 text-gray-400" />
-            <h3 className="mt-4 text-xl font-semibold text-gray-900 dark:text-white">
-              No events recorded
-            </h3>
-            <p className="mt-2 text-sm text-gray-500 dark:text-zinc-400">
-              No events found matching your selected filters.
-            </p>
+        <div className="flex flex-col items-center justify-center py-12 text-center">
+          <div className="rounded-full bg-gray-100 p-4 dark:bg-zinc-800">
+            <Video className="h-8 w-8 text-gray-400" />
           </div>
+          <h3 className="mt-4 text-lg font-medium text-gray-900 dark:text-white">
+            No events found
+          </h3>
+          <p className="mt-2 text-sm text-gray-500 dark:text-zinc-400">
+            Try selecting a different camera or date.
+          </p>
         </div>
       );
     }
+
+    if (viewMode === "grid") {
+      return (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {events.map((event) => (
+            <EventCard
+              key={event.id}
+              event={event}
+              onPlay={handlePlayClick}
+              onDelete={openDeleteModal}
+            />
+          ))}
+        </div>
+      );
+    }
+
     return (
-      <div className="inline-grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {eventList.map((event) => (
-          <EventCard
+      <div className="flex flex-col gap-2">
+        {events.map((event) => (
+          <EventListItem
             key={event.id}
             event={event}
             onPlay={handlePlayClick}
@@ -236,104 +332,123 @@ export default function EventsPage({ cameras }: EventsPageProps) {
   };
 
   return (
-    <>
-      <div className="space-y-8 max-w-6xl pb-16">
-        <div className="mb-8">
-          <h1 className="text-3xl font-semibold text-gray-900 dark:text-white">
-            Event Recordings
-          </h1>
-          <p className="mt-1 text-gray-500 dark:text-zinc-400">
-            Browse motion-detected recordings.
-          </p>
-        </div>
-
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className="flex-1">
-            <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300">
-              Filter by Camera
-            </label>
-            <Tab.Group
-              selectedIndex={selectedTabIndex}
-              onChange={setSelectedTabIndex}
+    <div className="flex h-full flex-col md:flex-row gap-6">
+      {/* LEFT SIDEBAR */}
+      <aside className="w-full md:w-64 flex-shrink-0 space-y-4">
+        <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-800">
+          <h2 className="mb-4 text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-zinc-400">
+            Cameras
+          </h2>
+          <div className="space-y-1">
+            <button
+              onClick={() => setSelectedCameraId(null)}
+              className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                selectedCameraId === null
+                  ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                  : "text-gray-700 hover:bg-gray-100 dark:text-zinc-300 dark:hover:bg-zinc-700"
+              }`}
             >
-              <Tab.List className="flex space-x-1 rounded-lg bg-gray-200 p-1 dark:bg-zinc-800">
-                <Tab as={Fragment}>
-                  {({ selected }) => (
-                    <button
-                      className={`
-                        w-full rounded-lg py-2.5 text-sm font-medium leading-5
-                        ${
-                          selected
-                            ? "bg-white text-blue-700 shadow dark:bg-zinc-700 dark:text-white"
-                            : "text-gray-600 hover:bg-white/50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
-                        }
-                        focus:outline-none focus:ring-2 ring-blue-500 ring-opacity-60
-                      `}
-                    >
-                      All Events
-                    </button>
-                  )}
-                </Tab>
-                {cameras.map((camera) => (
-                  <Tab as={Fragment} key={camera.id}>
-                    {({ selected }) => (
-                      <button
-                        className={`
-                          w-full rounded-lg py-2.5 text-sm font-medium leading-5
-                          ${
-                            selected
-                              ? "bg-white text-blue-700 shadow dark:bg-zinc-700 dark:text-white"
-                              : "text-gray-600 hover:bg-white/50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
-                          }
-                          focus:outline-none focus:ring-2 ring-blue-500 ring-opacity-60
-                        `}
-                      >
-                        {camera.name}
-                      </button>
-                    )}
-                  </Tab>
-                ))}
-              </Tab.List>
-            </Tab.Group>
+              <LayoutGrid className="h-4 w-4" />
+              All Events
+            </button>
+            {cameras.map((camera) => (
+              <button
+                key={camera.id}
+                onClick={() => setSelectedCameraId(camera.id)}
+                className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                  selectedCameraId === camera.id
+                    ? "bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                    : "text-gray-700 hover:bg-gray-100 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                }`}
+              >
+                <CameraIcon className="h-4 w-4" />
+                {camera.name}
+              </button>
+            ))}
           </div>
-          <div className="w-full md:w-48">
-            <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300">
-              Filter by Date
-            </label>
+        </div>
+      </aside>
+
+      {/* MAIN CONTENT */}
+      <div className="flex-1 min-w-0 space-y-6">
+        {/* Header / Filter Bar */}
+        <div className="flex flex-col gap-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-800 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-lg font-semibold text-gray-900 dark:text-white">
+              {selectedCameraId
+                ? cameras.find((c) => c.id === selectedCameraId)?.name ||
+                  "Camera Events"
+                : "All Events"}
+            </h1>
+            <p className="text-sm text-gray-500 dark:text-zinc-400">
+              {format(new Date(selectedDate || ""), "MMMM d, yyyy")}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            {/* View Toggles */}
+            <div className="flex items-center rounded-lg border border-gray-200 bg-gray-50 p-1 dark:border-zinc-700 dark:bg-zinc-900">
+              <button
+                onClick={() => setViewMode("grid")}
+                className={`rounded p-1.5 transition-colors ${
+                  viewMode === "grid"
+                    ? "bg-white shadow-sm dark:bg-zinc-700 dark:text-white"
+                    : "text-gray-500 hover:text-gray-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                }`}
+                title="Grid View"
+              >
+                <LayoutGrid className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => setViewMode("list")}
+                className={`rounded p-1.5 transition-colors ${
+                  viewMode === "list"
+                    ? "bg-white shadow-sm dark:bg-zinc-700 dark:text-white"
+                    : "text-gray-500 hover:text-gray-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                }`}
+                title="List View"
+              >
+                <List className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Date Picker */}
             <input
               type="date"
               value={selectedDate || ""}
               onChange={(e) => setSelectedDate(e.target.value || null)}
-              className="block w-full p-2.5 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
+              className="rounded-md border-gray-300 bg-gray-50 px-3 py-1.5 text-sm focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-900 dark:text-white"
             />
             {selectedDate !== getTodayString() && (
               <button
                 onClick={() => setSelectedDate(getTodayString())}
-                className="w-full text-left text-sm text-blue-600 hover:underline dark:text-blue-400 mt-1"
+                className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
               >
-                Jump to Today
+                Today
               </button>
             )}
           </div>
         </div>
 
-        <div className="pt-4">
-          {selectedDate && (
+        {/* Timeline */}
+        {selectedDate && (
+          <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-800">
             <EventTimeline
               date={selectedDate}
               cameraId={selectedCameraId}
               onEventClick={handleTimelineEventClick}
             />
-          )}
-        </div>
+          </div>
+        )}
 
-        <div className="mt-6 flex justify-center">
+        {/* Events Content */}
+        <div>
           {isLoading ? (
-            <div className="flex justify-center p-12">
-              <Loader className="h-10 w-10 animate-spin text-zinc-500" />
+            <div className="flex justify-center py-12">
+              <Loader className="h-8 w-8 animate-spin text-zinc-500" />
             </div>
           ) : (
-            renderEventGrid(events)
+            renderContent()
           )}
         </div>
       </div>
@@ -350,6 +465,6 @@ export default function EventsPage({ cameras }: EventsPageProps) {
         cameraName="this event recording"
         isDeleting={isDeleting}
       />
-    </>
+    </div>
   );
 }

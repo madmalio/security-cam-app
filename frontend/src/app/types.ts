@@ -9,6 +9,8 @@ export interface Camera {
   display_order: number;
   motion_type: MotionType;
   motion_roi: string | null;
+  motion_sensitivity: number;
+  continuous_recording: boolean;
 }
 
 export interface User {

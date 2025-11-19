@@ -32,7 +32,11 @@ class Camera(Base):
     owner_id = Column(Integer, ForeignKey("users.id"))
     display_order = Column(Integer, default=0)
     motion_type = Column(String, default="off", nullable=False)
-    motion_roi = Column(String, nullable=True) 
+    motion_roi = Column(String, nullable=True)
+    motion_sensitivity = Column(Integer, default=50)
+    # --- NEW COLUMN ---
+    continuous_recording = Column(Boolean, default=False, nullable=False)
+    # ------------------
     owner = relationship("User", back_populates="cameras")
     events = relationship("Event", back_populates="camera", cascade="all, delete-orphan")
 

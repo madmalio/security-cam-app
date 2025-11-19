@@ -2,8 +2,8 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { Camera } from "@/app/types";
-import { Loader, AlertTriangle, Video, Maximize, Minimize } from "lucide-react";
-import { useAuth } from "@/app/contexts/AuthContext"; // <-- 1. IMPORT
+import { Loader, AlertTriangle, Video, Maximize } from "lucide-react";
+import { useAuth } from "@/app/contexts/AuthContext";
 
 const MEDIAMTX_URL =
   process.env.NEXT_PUBLIC_WHEP_URL || "http://localhost:8888";
@@ -11,14 +11,15 @@ const MEDIAMTX_URL =
 interface LiveCameraViewProps {
   camera: Camera | null;
   isMuted?: boolean;
-  // 2. No more token prop
+  fill?: boolean; // <-- Preserving the fill prop for black bars fix
 }
 
 export default function LiveCameraView({
   camera,
   isMuted = true,
+  fill = false,
 }: LiveCameraViewProps) {
-  const { api } = useAuth(); // <-- 3. Get api hook
+  const { api } = useAuth();
   const videoRef = useRef<HTMLVideoElement>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const [connectionState, setConnectionState] = useState("idle");
@@ -47,18 +48,15 @@ export default function LiveCameraView({
       setConnectionState("connecting");
 
       try {
-        const pc = new RTCPeerConnection();
+        const pc = new RTCPeerConnection({
+          iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+        });
         peerConnectionRef.current = pc;
 
         pc.onconnectionstatechange = () => {
           const state = pc.connectionState;
           setConnectionState(state);
-
-          if (
-            state === "failed" ||
-            state === "disconnected" ||
-            state === "closed"
-          ) {
+          if (["failed", "disconnected", "closed"].includes(state)) {
             if (!retryTimeoutRef.current) {
               retryTimeoutRef.current = setTimeout(() => {
                 setRetryAttempt((prev) => prev + 1);
@@ -77,11 +75,9 @@ export default function LiveCameraView({
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
 
-        // 4. Fetch credentials securely using 'api' hook
+        // 1. Get credentials via API (No popup!)
         const credsResponse = await api("/api/webrtc-creds");
-        if (!credsResponse) return; // Logout already handled
-
-        if (!credsResponse.ok) {
+        if (!credsResponse || !credsResponse.ok) {
           throw new Error("Failed to fetch stream credentials");
         }
         const creds = await credsResponse.json();
@@ -89,19 +85,18 @@ export default function LiveCameraView({
 
         const whepEndpoint = `${MEDIAMTX_URL}/${camera.path}/whep`;
 
+        // 2. Connect using WHEP (WebRTC)
         const response = await fetch(whepEndpoint, {
           method: "POST",
           headers: {
             "Content-Type": "application/sdp",
-            Authorization: `Basic ${credentials}`, // 5. Now uses secure creds
+            Authorization: `Basic ${credentials}`,
           },
           body: pc.localDescription?.sdp,
         });
 
         if (!response.ok) {
-          throw new Error(
-            `Failed to connect to WHEP: ${response.status} ${response.statusText}`
-          );
+          throw new Error(`WHEP Error: ${response.status}`);
         }
 
         const answerSdp = await response.text();
@@ -125,82 +120,61 @@ export default function LiveCameraView({
         peerConnectionRef.current.close();
       }
     };
-  }, [camera, retryAttempt, api]); // 6. Add 'api' to dependency array
+  }, [camera, retryAttempt, api]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
     };
-
     document.addEventListener("fullscreenchange", handleFullscreenChange);
-
-    return () => {
+    return () =>
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
-    };
   }, []);
 
   const toggleFullscreen = () => {
     if (!containerRef.current) return;
-
     if (isFullscreen) {
-      if (document.exitFullscreen) {
-        document.exitFullscreen();
-      }
+      if (document.exitFullscreen) document.exitFullscreen();
     } else {
-      if (containerRef.current.requestFullscreen) {
+      if (containerRef.current.requestFullscreen)
         containerRef.current.requestFullscreen();
-      }
     }
-  };
-
-  const ConnectionStatus = () => {
-    let icon, text;
-    switch (connectionState) {
-      case "connecting":
-      case "new":
-        return null;
-      case "connected":
-        return null;
-      case "failed":
-      case "disconnected":
-      case "closed":
-        icon = <AlertTriangle className="h-12 w-12 text-red-400" />;
-        text = "Connection Failed";
-        break;
-      default:
-        icon = <Video className="h-12 w-12 text-gray-400" />;
-        text = "Select a camera to view";
-    }
-
-    return (
-      <div className="absolute inset-0 flex flex-col items-center justify-center rounded-lg bg-black/60">
-        {icon}
-        <p className="mt-2 text-lg font-medium text-white">{text}</p>
-      </div>
-    );
   };
 
   return (
     <div
       ref={containerRef}
-      className="relative aspect-video w-full rounded-lg bg-black shadow-lg group"
+      className="relative w-full h-full bg-black rounded-lg shadow-lg group"
     >
       <video
         ref={videoRef}
         autoPlay
         muted={isMuted}
         playsInline
-        className={`h-full w-full rounded-lg ${
-          !isMuted ? "object-contain" : "object-cover"
+        // --- THIS FIXES THE BLACK BARS ---
+        className={`w-full h-full ${
+          fill || isMuted ? "object-cover" : "object-contain"
         }`}
+        // ---------------------------------
       />
-      <ConnectionStatus />
+
+      {connectionState !== "connected" && connectionState !== "new" && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 text-white">
+          {connectionState === "connecting" ? (
+            <Loader className="w-8 h-8 animate-spin" />
+          ) : (
+            <>
+              <AlertTriangle className="w-8 h-8 text-red-400 mb-2" />
+              <p>Connection Failed</p>
+            </>
+          )}
+        </div>
+      )}
 
       {connectionState === "connected" && !isFullscreen && (
         <button
           onClick={toggleFullscreen}
           className="absolute bottom-2 right-2 rounded-full bg-black/50 p-2 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-black/80"
-          title="Enter Fullscreen"
         >
           <Maximize className="h-5 w-5" />
         </button>

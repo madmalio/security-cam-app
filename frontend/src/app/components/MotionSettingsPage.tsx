@@ -38,19 +38,18 @@ export default function MotionSettingsPage({
     [cameras, selectedCameraId]
   );
 
-  const [motionType, setMotionType] = useState<MotionType>(
-    selectedCamera?.motion_type || "off"
-  );
-  const [motionRoi, setMotionRoi] = useState(selectedCamera?.motion_roi || "");
-  const [rtspSubstreamUrl, setRtspSubstreamUrl] = useState(
-    selectedCamera?.rtsp_substream_url || ""
-  );
+  const [motionType, setMotionType] = useState<MotionType>("off");
+  const [motionRoi, setMotionRoi] = useState("");
+  const [rtspSubstreamUrl, setRtspSubstreamUrl] = useState("");
+  // --- NEW STATE ---
+  const [sensitivity, setSensitivity] = useState(50);
 
   React.useEffect(() => {
     if (selectedCamera) {
       setMotionType(selectedCamera.motion_type);
       setMotionRoi(selectedCamera.motion_roi || "");
       setRtspSubstreamUrl(selectedCamera.rtsp_substream_url || "");
+      setSensitivity(selectedCamera.motion_sensitivity || 50); // Default to 50
     }
   }, [selectedCamera]);
 
@@ -65,6 +64,7 @@ export default function MotionSettingsPage({
           motion_type: motionType,
           motion_roi: motionRoi,
           rtsp_substream_url: rtspSubstreamUrl || null,
+          motion_sensitivity: sensitivity, // <-- Send new value
         }),
       });
       if (!response) return;
@@ -148,7 +148,7 @@ export default function MotionSettingsPage({
                 />
                 <MotionRadioCard
                   label="Webhook"
-                  desc="Use an external trigger (e.g., Wyze-Bridge)."
+                  desc="Use an external trigger."
                   icon={Webhook}
                   value="webhook"
                   currentType={motionType}
@@ -156,7 +156,7 @@ export default function MotionSettingsPage({
                 />
                 <MotionRadioCard
                   label="In-App"
-                  desc="Use server CPU to detect motion (Beta)."
+                  desc="Use active tracking."
                   icon={RadioTower}
                   value="active"
                   currentType={motionType}
@@ -164,6 +164,26 @@ export default function MotionSettingsPage({
                 />
               </div>
             </div>
+
+            {motionType === "active" && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-zinc-300 mb-2">
+                  Sensitivity: {sensitivity}%
+                </label>
+                <input
+                  type="range"
+                  min="1"
+                  max="100"
+                  value={sensitivity}
+                  onChange={(e) => setSensitivity(Number(e.target.value))}
+                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+                />
+                <div className="flex justify-between text-xs text-gray-500 dark:text-zinc-400 mt-1">
+                  <span>Low (Only big movements)</span>
+                  <span>High (Tiny movements)</span>
+                </div>
+              </div>
+            )}
 
             {motionType === "active" && (
               <div>
@@ -182,10 +202,6 @@ export default function MotionSettingsPage({
                   placeholder="Low-res URL for fast motion detection"
                   className="mt-1 w-full rounded-md border border-gray-300 p-2 text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white dark:placeholder:text-zinc-500"
                 />
-                <p className="mt-1 text-sm text-gray-500 dark:text-zinc-400">
-                  Providing a substream (e.g., 640x360) will significantly
-                  reduce server CPU usage.
-                </p>
               </div>
             )}
 
@@ -250,7 +266,7 @@ export default function MotionSettingsPage({
               {isSaving ? (
                 <Loader className="h-5 w-5 animate-spin" />
               ) : (
-                "Save Motion Settings"
+                "Save Settings"
               )}
             </button>
           </div>
@@ -260,7 +276,6 @@ export default function MotionSettingsPage({
   );
 }
 
-// Helper component for radio buttons
 const MotionRadioCard = ({
   label,
   desc,
@@ -292,7 +307,7 @@ const MotionRadioCard = ({
           className={`h-5 w-5 ${
             isActive
               ? "text-blue-600 dark:text-blue-400"
-              : "text-gray-500 dark:text-zinc-4s00"
+              : "text-gray-500 dark:text-zinc-400"
           }`}
         />
         <span

@@ -30,7 +30,9 @@ export default function TestStreamModal({
         display_order: 0,
         motion_type: "off",
         rtsp_substream_url: null,
-        motion_roi: null, // <-- THIS IS THE FIX
+        motion_roi: null,
+        motion_sensitivity: 50,
+        continuous_recording: false, // <-- FIX: Added required field
       });
     } else {
       setTestCamera(null); // Clear camera when modal closes

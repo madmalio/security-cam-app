@@ -11,7 +11,6 @@ interface FullscreenGridViewProps {
   cameras: Camera[];
   onExitFullscreen: () => void;
   gridColumns: GridColumns;
-  // No more token prop
 }
 
 export default function FullscreenGridView({
@@ -43,7 +42,7 @@ export default function FullscreenGridView({
     return (
       <div
         key={camera.id}
-        className="relative rounded-lg shadow-lg overflow-hidden group"
+        className="relative rounded-lg shadow-lg overflow-hidden group bg-zinc-900"
       >
         <div
           className="absolute inset-0 z-10 cursor-pointer"
@@ -68,41 +67,39 @@ export default function FullscreenGridView({
   const gridLayout = gridClassMap[gridColumns] || "lg:grid-cols-4";
 
   return (
-    <div className="fixed inset-0 z-50 bg-black p-4 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 bg-black">
+      {/* Floating Exit Button */}
+      <button
+        onClick={onExitFullscreen}
+        className="absolute top-4 right-4 z-[60] rounded-full bg-black/50 p-2 text-white hover:bg-white/20 backdrop-blur-sm transition-colors"
+        title="Exit Fullscreen"
+      >
+        <X className="h-6 w-6" />
+      </button>
+
       {mode === "focus" && focusedCamera ? (
         // --- SINGLE FOCUS VIEW ---
-        <div className="w-full max-w-full max-h-full aspect-video relative group">
+        <div className="w-full h-full relative group bg-black">
+          {/* Uses full height/width with object-contain in MosaicLiveView */}
           <MosaicLiveView camera={focusedCamera} isMuted={false} />
+
           <button
             onClick={handleGoBackToGrid}
-            className="absolute top-2 left-2 z-20 flex items-center gap-2 rounded-full p-2 text-white/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-white/10 hover:text-white"
+            className="absolute top-4 left-4 z-[60] flex items-center gap-2 rounded-full bg-black/50 p-2 text-white hover:bg-white/20 backdrop-blur-sm transition-colors"
             title="Back to Grid View"
           >
-            <ArrowLeft className="h-5 w-5" />
+            <ArrowLeft className="h-6 w-6" />
           </button>
         </div>
       ) : (
         // --- FULL GRID VIEW ---
-        <div className="w-full h-full">
-          {/* Header with Exit Button */}
-          <div className="flex justify-end mb-2">
-            <button
-              onClick={onExitFullscreen}
-              className="rounded-full bg-black/50 p-2 text-white hover:bg-black/80"
-              title="Exit Fullscreen"
-            >
-              <X className="h-5 w-5" />
-            </button>
-          </div>
-          {/* Scrollable Grid Container */}
-          <div className="w-full h-[calc(100%-40px)] overflow-y-auto">
-            <div
-              className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 ${gridLayout}`}
-            >
-              {cameras.map((camera) => (
-                <CameraTile key={camera.id} camera={camera} />
-              ))}
-            </div>
+        <div className="w-full h-full overflow-y-auto p-2">
+          <div
+            className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 ${gridLayout} min-h-full content-start`}
+          >
+            {cameras.map((camera) => (
+              <CameraTile key={camera.id} camera={camera} />
+            ))}
           </div>
         </div>
       )}

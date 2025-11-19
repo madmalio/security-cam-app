@@ -11,12 +11,15 @@ import {
   X,
   Wifi,
   GripVertical,
+  HardDrive,
+  AlertTriangle,
 } from "lucide-react";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import TestStreamModal from "./TestStreamModal";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useAuth } from "@/app/contexts/AuthContext";
+import { Switch } from "@headlessui/react"; // Using Headless UI Switch
 
 interface CameraEditRowProps {
   camera: Camera;
@@ -39,7 +42,10 @@ export default function CameraEditRow({
   // --- State for fields ---
   const [name, setName] = useState(camera.name);
   const [rtspUrl, setRtspUrl] = useState(camera.rtsp_url);
-  // --- Removed rtspSubstreamUrl state ---
+  // NEW: Continuous Recording State
+  const [continuousRecording, setContinuousRecording] = useState(
+    camera.continuous_recording || false
+  );
 
   const {
     attributes,
@@ -86,12 +92,12 @@ export default function CameraEditRow({
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      // --- FIX: Only save fields from this page ---
       const response = await api(`/api/cameras/${camera.id}`, {
-        method: "PATCH", // <-- Use PATCH for partial updates
+        method: "PATCH",
         body: JSON.stringify({
           name: name,
           rtsp_url: rtspUrl,
+          continuous_recording: continuousRecording, // <-- Save new setting
         }),
       });
       if (!response) return;
@@ -102,7 +108,7 @@ export default function CameraEditRow({
       }
 
       toast.success(`Updated "${name}" successfully!`);
-      onUpdate(); // Re-fetches all cameras
+      onUpdate();
       setIsEditing(false);
     } catch (err: any) {
       toast.error(err.message);
@@ -135,6 +141,7 @@ export default function CameraEditRow({
   const handleCancel = () => {
     setName(camera.name);
     setRtspUrl(camera.rtsp_url);
+    setContinuousRecording(camera.continuous_recording); // Reset toggle
     setIsEditing(false);
   };
 
@@ -158,7 +165,7 @@ export default function CameraEditRow({
             </p>
           </div>
 
-          <div className="space-y-4">
+          <div className="space-y-6">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <label
@@ -191,7 +198,51 @@ export default function CameraEditRow({
                 />
               </div>
             </div>
-            {/* --- Substream URL input is REMOVED --- */}
+
+            {/* --- NEW: Continuous Recording Toggle --- */}
+            <div className="rounded-md border border-gray-200 bg-gray-50 p-4 dark:border-zinc-700 dark:bg-zinc-800/50">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <HardDrive className="h-5 w-5 text-gray-500 dark:text-zinc-400" />
+                  <div>
+                    <p className="font-medium text-gray-900 dark:text-white">
+                      24/7 Continuous Recording
+                    </p>
+                    <p className="text-sm text-gray-500 dark:text-zinc-400">
+                      Record non-stop, even when no motion is detected.
+                    </p>
+                  </div>
+                </div>
+                <Switch
+                  checked={continuousRecording}
+                  onChange={setContinuousRecording}
+                  className={`${
+                    continuousRecording
+                      ? "bg-blue-600"
+                      : "bg-gray-200 dark:bg-zinc-600"
+                  } relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
+                >
+                  <span
+                    className={`${
+                      continuousRecording ? "translate-x-6" : "translate-x-1"
+                    } inline-block h-4 w-4 transform rounded-full bg-white transition-transform`}
+                  />
+                </Switch>
+              </div>
+
+              {/* --- WARNING BANNER --- */}
+              {continuousRecording && (
+                <div className="mt-4 flex items-start gap-3 rounded-md bg-yellow-50 p-3 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-200">
+                  <AlertTriangle className="h-5 w-5 shrink-0" />
+                  <div className="text-sm">
+                    <strong>High Storage Usage Warning:</strong>
+                    <br />
+                    Continuous recording can use 50GB - 100GB per day per
+                    camera. Ensure your host has sufficient disk space.
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="mt-6 flex justify-end gap-3">
@@ -228,7 +279,7 @@ export default function CameraEditRow({
   }
 
   return (
-    // This is the "View" mode
+    // View Mode
     <>
       <div
         ref={setNodeRef}
@@ -249,9 +300,17 @@ export default function CameraEditRow({
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                 {camera.name}
               </h3>
-              <p className="mt-1 truncate text-sm text-gray-500 dark:text-zinc-400">
-                {camera.rtsp_url}
-              </p>
+              <div className="mt-1 flex items-center gap-3 text-sm text-gray-500 dark:text-zinc-400">
+                <span className="truncate max-w-[200px]">
+                  {camera.rtsp_url}
+                </span>
+                {/* Show badge if 24/7 is active */}
+                {camera.continuous_recording && (
+                  <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/30 dark:text-green-300">
+                    24/7 REC
+                  </span>
+                )}
+              </div>
             </div>
           </div>
           <div className="mt-4 flex gap-3 sm:mt-0">
@@ -285,7 +344,6 @@ export default function CameraEditRow({
             </button>
           </div>
         </div>
-        {/* --- All motion-related UI is GONE --- */}
       </div>
       <ConfirmDeleteModal
         isOpen={isConfirmOpen}

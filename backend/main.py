@@ -10,7 +10,10 @@ import logging
 import asyncio
 import hashlib
 import uuid
-from datetime import datetime, timezone, timedelta, date # Keep date import
+import time  # <-- THIS WAS MISSING
+import shutil
+import psutil
+from datetime import datetime, timezone, timedelta, date 
 from fastapi.staticfiles import StaticFiles
 import os
 
@@ -49,11 +52,13 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
 class CameraBase(BaseModel): name: str
 class CameraCreate(BaseModel): 
     name: str
     rtsp_url: str
     rtsp_substream_url: Optional[str] = None
+
 class Camera(CameraBase):
     id: int
     owner_id: int
@@ -63,13 +68,19 @@ class Camera(CameraBase):
     display_order: int
     motion_type: str
     motion_roi: Optional[str] = None
+    motion_sensitivity: int 
+    continuous_recording: bool
     class Config: from_attributes = True 
+
 class CameraUpdate(BaseModel):
     name: Optional[str] = None
     rtsp_url: Optional[str] = None
     rtsp_substream_url: Optional[str] = None
     motion_type: Optional[str] = None
     motion_roi: Optional[str] = None
+    motion_sensitivity: Optional[int] = None 
+    continuous_recording: Optional[bool] = None
+
 class TestCameraRequest(BaseModel):
     rtsp_url: str
 class ReorderRequest(BaseModel):
@@ -128,8 +139,18 @@ class EventSummary(BaseModel):
     start_time: datetime
     end_time: Optional[datetime] = None
     camera_id: int
-    
     class Config: from_attributes = True
+
+class SystemHealth(BaseModel):
+    cpu_percent: float
+    memory_total: int
+    memory_used: int
+    memory_percent: float
+    disk_total: int
+    disk_free: int
+    disk_used: int
+    disk_percent: float
+    uptime_seconds: float
 
 
 # ====================================================================
@@ -163,11 +184,13 @@ def create_access_token(data: dict, expires_delta: timedelta):
 
 
 # ====================================================================
-#                 Helper Functions (UPDATED)
+#                 Helper Functions
 # ====================================================================
 
 async def configure_mediamtx_path(camera_path: str, rtsp_url: str):
+    """Adds or updates a camera path in mediamtx."""
     auth = ("admin", MEDIAMTX_ADMIN_PASS) 
+    
     path_config = {
         "source": rtsp_url,
         "sourceOnDemand": True,
@@ -400,7 +423,9 @@ async def create_camera_for_user(
             rtsp_substream_url=camera.rtsp_substream_url,
             owner_id=user_id, 
             display_order=new_order,
-            motion_type="off"
+            motion_type="off",
+            motion_sensitivity=50, # Default
+            continuous_recording=False # Default
         )
         db.add(db_camera)
         db.commit()
@@ -518,7 +543,7 @@ async def delete_temp_path(path: str):
     except Exception as e:
         log.error(f"--- Failed to delete temp path {path}: {e} ---")
 
-# --- Event / Webhook Endpoints (FIXED) ---
+# --- Event / Webhook Endpoints ---
 @app.post("/api/webhook/motion/{camera_path}")
 async def webhook_motion_legacy(
     camera_path: str,
@@ -560,11 +585,12 @@ async def webhook_motion_legacy(
     log.info(f"--- Created Event {db_event.id} for camera {camera.name} ---")
     return {"message": "Event logged"}
 
+# --- Timezone-Aware Event Endpoints ---
 @app.get("/api/events", response_model=List[Event])
 async def get_events(
     camera_id: Optional[int] = None, 
-    start_ts: Optional[datetime] = None, # <-- Changed from date_str
-    end_ts: Optional[datetime] = None,   # <-- Added end_ts
+    start_ts: Optional[datetime] = None, 
+    end_ts: Optional[datetime] = None,   
     current_user: models.User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db)
 ):
@@ -576,7 +602,6 @@ async def get_events(
     if camera_id is not None:
         query = query.filter(models.Event.camera_id == camera_id)
         
-    # Filter by the specific time range provided by the frontend
     if start_ts:
         query = query.filter(models.Event.start_time >= start_ts)
     if end_ts:
@@ -590,18 +615,14 @@ async def get_events(
     )
     return events
 
-
 @app.get("/api/events/summary", response_model=List[EventSummary])
 async def get_event_summary(
-    start_ts: datetime, # <-- Changed from date_str (now required)
-    end_ts: datetime,   # <-- Added end_ts (now required)
+    start_ts: datetime, 
+    end_ts: datetime,
     camera_id: Optional[int] = None,
     current_user: models.User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db)
 ):
-    """
-    Fetches events within a specific time range (calculated by frontend to match local day)
-    """
     query = (
         db.query(models.Event)
         .filter(models.Event.user_id == current_user.id)
@@ -660,6 +681,76 @@ async def delete_event(
         db.rollback()
         log.error(f"--- Error deleting event {event_id}: {e} ---")
         raise HTTPException(status_code=500, detail="Failed to delete event")
+
+# --- NEW: Endpoint to list continuous recordings ---
+@app.get("/api/cameras/{camera_id}/recordings")
+async def get_continuous_recordings(
+    camera_id: int,
+    date_str: str, # Expected format: YYYY-MM-DD
+    current_user: models.User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db)
+):
+    # 1. Verify camera ownership
+    camera = db.query(models.Camera).filter(models.Camera.id == camera_id, models.Camera.owner_id == current_user.id).first()
+    if not camera:
+        raise HTTPException(status_code=404, detail="Camera not found")
+
+    # 2. Construct directory path
+    recordings_dir = f"/recordings/continuous/{camera_id}"
+    
+    if not os.path.exists(recordings_dir):
+        return []
+
+    # 3. Filter files by date
+    # Filename format: YYYYMMDD-HHMMSS.mp4
+    target_date_prefix = date_str.replace("-", "") # e.g. 2025-11-18 -> 20251118
+    
+    found_files = []
+    try:
+        for filename in os.listdir(recordings_dir):
+            if filename.startswith(target_date_prefix) and filename.endswith(".mp4"):
+                # Create the web-accessible URL
+                url = f"continuous/{camera_id}/{filename}"
+                found_files.append({
+                    "filename": filename,
+                    "url": url,
+                    "time": filename.split("-")[1].split(".")[0] # Extract HHMMSS
+                })
+                
+        # Sort by time (ascending)
+        found_files.sort(key=lambda x: x["filename"])
+        
+    except Exception as e:
+        log.error(f"Error listing recordings: {e}")
+        raise HTTPException(status_code=500, detail="Failed to list recordings")
+
+    return found_files
+
+# --- System Health Endpoint ---
+@app.get("/api/system/health", response_model=SystemHealth)
+async def get_system_health(
+    current_user: models.User = Depends(get_current_user_from_token)
+):
+    try:
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        mem = psutil.virtual_memory()
+        disk = shutil.disk_usage("/recordings")
+        uptime_seconds = time.time() - psutil.boot_time()
+        
+        return {
+            "cpu_percent": cpu_percent,
+            "memory_total": mem.total,
+            "memory_used": mem.used,
+            "memory_percent": mem.percent,
+            "disk_total": disk.total,
+            "disk_free": disk.free,
+            "disk_used": disk.used,
+            "disk_percent": (disk.used / disk.total) * 100,
+            "uptime_seconds": uptime_seconds
+        }
+    except Exception as e:
+        log.error(f"Failed to get system stats: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch system health")
 
 # --- User/Session Endpoints ---
 @app.put("/api/users/me", response_model=User)

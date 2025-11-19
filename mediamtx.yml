@@ -1,10 +1,12 @@
 authMethod: internal
+
 authInternalUsers:
   - user: admin
     pass: mysecretpassword
     permissions:
       - action: api
       - action: read
+      - action: publish
   - user: viewer
     pass: secret
     permissions:
@@ -14,6 +16,7 @@ api: yes
 apiAddress: :9997
 apiEncryption: false
 
+# Enable WebRTC
 webrtc: yes
 webrtcAddress: :8888
 webrtcAllowOrigin: "*"
@@ -21,6 +24,7 @@ webrtcICEServers2:
   - url: "stun:stun.l.google.com:19302"
 webrtcEncryption: false
 
+# Keep HLS enabled as a fallback, but we won't use it for the main view
 hls: yes
 hlsAddress: :8887
 hlsAllowOrigin: "*"

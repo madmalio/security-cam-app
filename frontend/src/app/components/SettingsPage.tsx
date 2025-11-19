@@ -1,14 +1,21 @@
 "use client";
 
 import React, { useState } from "react";
-// --- THIS IS THE FIX ---
-import { User, Camera, Palette, Scan, ShieldCheck } from "lucide-react";
-// -----------------------
+// --- IMPORT HardDrive ICON ---
+import {
+  User,
+  Camera,
+  Palette,
+  Scan,
+  ShieldCheck,
+  HardDrive,
+} from "lucide-react";
 import ProfileSettings from "./ProfileSettings";
 import SecuritySettings from "./SecuritySettings";
 import CameraSettings from "./CameraSettings";
 import AppearanceSettings from "./AppearanceSettings";
 import MotionSettingsPage from "./MotionSettingsPage";
+import SystemSettings from "./SystemSettings"; // <-- IMPORT NEW COMPONENT
 import { Camera as CameraType } from "@/app/types";
 
 type SettingsSection =
@@ -16,7 +23,8 @@ type SettingsSection =
   | "security"
   | "cameras"
   | "appearance"
-  | "motion";
+  | "motion"
+  | "system"; // <-- ADD TYPE
 
 interface SettingsPageProps {
   cameras: CameraType[];
@@ -59,8 +67,10 @@ export default function SettingsPage({
         <NavItem label="Profile" icon={User} section="profile" />
         <NavItem label="Security" icon={ShieldCheck} section="security" />
         <NavItem label="Cameras" icon={Camera} section="cameras" />
-        <NavItem label="Appearance" icon={Palette} section="appearance" />
         <NavItem label="Motion" icon={Scan} section="motion" />
+        <NavItem label="System" icon={HardDrive} section="system" />{" "}
+        {/* <-- NEW TAB */}
+        <NavItem label="Appearance" icon={Palette} section="appearance" />
       </nav>
 
       {/* Right Content */}
@@ -77,6 +87,8 @@ export default function SettingsPage({
             onCamerasUpdate={onCamerasUpdate}
           />
         )}
+        {currentSection === "system" && <SystemSettings />}{" "}
+        {/* <-- NEW COMPONENT */}
       </div>
     </div>
   );

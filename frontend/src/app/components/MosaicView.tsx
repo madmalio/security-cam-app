@@ -9,7 +9,6 @@ import { Pause, Play, X, ArrowLeft } from "lucide-react";
 interface MosaicViewProps {
   cameras: Camera[];
   onExitFullscreen: () => void;
-  // No more token prop
 }
 
 const CYCLE_TIME_MS = 15000; // 15 seconds
@@ -47,13 +46,13 @@ export default function MosaicView({
   const handleCameraClick = (camera: Camera) => {
     setFocusedCamera(camera);
     setMosaicMode("focus");
-    setIsCycling(false); // Pause cycling
+    setIsCycling(false);
   };
 
   const handleGoBackToGrid = () => {
     setMosaicMode("grid");
     setFocusedCamera(null);
-    setIsCycling(true); // Resume cycling
+    setIsCycling(true);
   };
 
   const CameraTile = ({
@@ -65,13 +64,13 @@ export default function MosaicView({
   }) => {
     if (!camera) {
       return (
-        <div className="rounded-lg bg-black/50 aspect-video flex items-center justify-center" />
+        <div className="rounded-lg bg-zinc-900/50 flex items-center justify-center" />
       );
     }
     return (
       <div
         key={camera.id}
-        className="relative rounded-lg shadow-lg overflow-hidden group"
+        className="relative rounded-lg shadow-lg overflow-hidden group bg-zinc-900"
       >
         <div
           className="absolute inset-0 z-10 cursor-pointer"
@@ -89,43 +88,45 @@ export default function MosaicView({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black p-4 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 bg-black">
       {mosaicMode === "focus" && focusedCamera ? (
         // --- SINGLE FOCUS VIEW ---
-        <div className="w-full max-w-full max-h-full aspect-video relative group">
+        <div className="w-full h-full relative group">
           <MosaicLiveView camera={focusedCamera} isMuted={false} />
           <button
             onClick={handleGoBackToGrid}
-            className="absolute top-2 left-2 z-20 flex items-center gap-2 rounded-full p-2 text-white/70 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-white/10 hover:text-white"
+            className="absolute top-4 left-4 z-[60] flex items-center gap-2 rounded-full bg-black/50 p-2 text-white hover:bg-white/20 backdrop-blur-sm transition-colors"
             title="Back to Mosaic View"
           >
-            <ArrowLeft className="h-5 w-5" />
+            <ArrowLeft className="h-6 w-6" />
           </button>
         </div>
       ) : (
         // --- 1+5 GRID VIEW ---
-        <div className="w-full max-w-full max-h-full aspect-video">
-          <div className="grid grid-cols-3 grid-rows-3 gap-2 h-full">
+        <div className="w-full h-full p-1">
+          <div className="grid grid-cols-3 grid-rows-3 gap-1 h-full">
             {/* Main Focus View */}
-            <div
-              className={`col-span-2 row-span-2 relative rounded-lg shadow-lg overflow-hidden group`}
-            >
+            <div className="col-span-2 row-span-2 relative rounded-lg shadow-lg overflow-hidden group bg-zinc-900">
               <div
                 className="absolute inset-0 z-10 cursor-pointer"
                 onClick={() => handleCameraClick(mainCamera)}
                 title={`Focus on ${mainCamera.name}`}
               />
-              <LiveCameraView camera={mainCamera} isMuted={false} />
+              {/* --- PASS FILL=TRUE TO REMOVE BLACK BARS --- */}
+              <LiveCameraView camera={mainCamera} isMuted={false} fill={true} />
+              {/* ------------------------------------------ */}
+
               <div className="absolute bottom-0 left-0 w-full bg-black/50 p-2 pointer-events-none">
                 <p className="truncate text-sm font-medium text-white">
                   {mainCamera.name}
                 </p>
               </div>
+
               {/* Control buttons */}
-              <div className="absolute top-2 right-2 z-20 flex gap-2">
+              <div className="absolute top-4 right-4 z-20 flex gap-2">
                 <button
                   onClick={() => setIsCycling(!isCycling)}
-                  className="rounded-full bg-black/50 p-2 text-white hover:bg-black/80"
+                  className="rounded-full bg-black/50 p-2 text-white hover:bg-white/20 backdrop-blur-sm transition-colors"
                   title={isCycling ? "Pause Auto-Cycle" : "Play Auto-Cycle"}
                 >
                   {isCycling ? (
@@ -136,7 +137,7 @@ export default function MosaicView({
                 </button>
                 <button
                   onClick={onExitFullscreen}
-                  className="rounded-full bg-black/50 p-2 text-white hover:bg-black/80"
+                  className="rounded-full bg-black/50 p-2 text-white hover:bg-white/20 backdrop-blur-sm transition-colors"
                   title="Exit Fullscreen"
                 >
                   <X className="h-5 w-5" />

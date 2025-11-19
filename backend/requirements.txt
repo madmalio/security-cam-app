@@ -9,3 +9,4 @@ alembic
 python-multipart
 argon2-cffi
 httpx
+psutil
