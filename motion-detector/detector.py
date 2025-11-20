@@ -144,7 +144,8 @@ async def start_record_webhook(camera_id: int):
             "video_path": video_abs_path,
             "thumb_path": thumb_db_path,
             "thumb_abs_path": f"/{thumb_db_path}",
-            "log_file": log_file
+            "log_file": log_file,
+            "start_ts": time.time() # <-- Added for leakage check
         }
         return {"message": f"Recording started for event {db_event.id}"}
         
@@ -167,7 +168,7 @@ async def stop_record_webhook(camera_id: int):
     
     try:
         # Close log file
-        if "log_file" in recording:
+        if "log_file" in recording and not recording["log_file"].closed:
             recording["log_file"].close()
 
         recording["process"].terminate()
@@ -275,7 +276,6 @@ def start_continuous_recording(camera):
         output_pattern
     ]
     
-    # LOGGING FIX: Write stderr to a file so we can read it if it crashes
     log_file_path = f"/var/log/motion/continuous_{camera.id}.err"
     log_file = open(log_file_path, "w")
     
@@ -310,7 +310,6 @@ def disk_manager_loop():
                 try:
                     if os.path.getmtime(file_path) < cutoff_time:
                         os.remove(file_path)
-                        # Also try to remove thumb/log
                         base = os.path.splitext(file_path)[0]
                         if os.path.exists(f"{base}.jpg"): os.remove(f"{base}.jpg")
                         if os.path.exists(f"{base}.log"): os.remove(f"{base}.log")
@@ -325,7 +324,6 @@ def disk_manager_loop():
             usage = shutil.disk_usage("/recordings")
             if usage.free < MIN_FREE_BYTES:
                 log.warning(f"LOW DISK SPACE: {usage.free / 1024**3:.2f} GB free. Starting emergency cleanup...")
-                # Re-scan for oldest files
                 files = glob.glob("/recordings/continuous/**/*.mp4", recursive=True)
                 files.sort(key=os.path.getmtime)
                 
@@ -470,7 +468,6 @@ def process_manager_loop():
                         # --- CRASH DETECTED: READ LOGS ---
                         log.warning(f"[{cam.id}] Continuous recording died. Restarting...")
                         try:
-                            # Flush and close to ensure we can read the file
                             entry["log_handle"].close() 
                             with open(entry["log_path"], "r") as f:
                                 error_log = f.read()
@@ -478,7 +475,6 @@ def process_manager_loop():
                         except Exception as e:
                             log.error(f"[{cam.id}] Could not read error log: {e}")
 
-                        # Restart
                         p, log_path, log_handle = start_continuous_recording(cam)
                         running_continuous_processes[cam.id] = {"process": p, "log_path": log_path, "log_handle": log_handle}
 
@@ -488,6 +484,33 @@ def process_manager_loop():
                     entry = running_continuous_processes.pop(cam_id)
                     entry["process"].terminate()
                     entry["log_handle"].close()
+
+            # --- JANITOR: Clean up stuck recordings ---
+            current_ts = time.time()
+            for cam_id in list(active_recordings.keys()):
+                rec = active_recordings[cam_id]
+                
+                # 1. Process died but entry remains
+                if rec["process"].poll() is not None:
+                    log.warning(f"[{cam_id}] Found zombie recording (process dead). Cleaning up.")
+                    if "log_file" in rec and not rec["log_file"].closed:
+                        rec["log_file"].close()
+                    del active_recordings[cam_id]
+                    continue
+
+                # 2. Runaway recording (> 2 hours)
+                if "start_ts" in rec and (current_ts - rec["start_ts"]) > 7200:
+                    log.warning(f"[{cam_id}] Event {rec['event_id']} timed out (>2h). Forcing stop.")
+                    try:
+                        rec["process"].terminate()
+                        rec["process"].wait(timeout=5)
+                    except:
+                        rec["process"].kill()
+                    
+                    if "log_file" in rec and not rec["log_file"].closed:
+                        rec["log_file"].close()
+                        
+                    del active_recordings[cam_id]
 
         except Exception as e:
             log.error(f"ERROR in process_manager_loop: {e}")
