@@ -13,10 +13,12 @@ import uuid
 import time
 import shutil
 import psutil
+import docker 
 from datetime import datetime, timezone, timedelta, date 
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
+import sys
 
 # Import our own modules
 import models
@@ -42,15 +44,15 @@ app.mount("/recordings", StaticFiles(directory="/recordings"), name="recordings"
 # ====================================================================
 #                 CORS Middleware & Pydantic Schemas
 # ====================================================================
-origins = [
-    "http://localhost:3000",
-    "http://localhost:3001",
-]
+
+# --- FIX: Allow ALL origins so mobile devices can connect via IP ---
+origin_regex = r"^http://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2[0-9]|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?$"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origin_regex=origin_regex, # <-- Changed from allow_origins
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -142,6 +144,11 @@ class EventSummary(BaseModel):
     camera_id: int
     class Config: from_attributes = True
 
+class RecordingSegment(BaseModel):
+    start_time: str  # ISO format
+    end_time: str    # ISO format
+    filename: str
+
 class SystemHealth(BaseModel):
     cpu_percent: float
     memory_total: int
@@ -152,6 +159,13 @@ class SystemHealth(BaseModel):
     disk_used: int
     disk_percent: float
     uptime_seconds: float
+
+class SystemSettingsSchema(BaseModel):
+    retention_days: int
+
+# --- Batch Delete Schema ---
+class BatchDeleteRequest(BaseModel):
+    event_ids: List[int]
 
 
 # ====================================================================
@@ -490,6 +504,58 @@ async def delete_camera(
         db.commit()
         return
     finally: db.close()
+
+# --- WIPE CAMERA RECORDINGS ---
+@app.delete("/api/cameras/{camera_id}/recordings", status_code=status.HTTP_200_OK)
+async def wipe_camera_recordings(
+    camera_id: int,
+    current_user: models.User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db)
+):
+    # Verify ownership
+    camera = db.query(models.Camera).filter(models.Camera.id == camera_id, models.Camera.owner_id == current_user.id).first()
+    if not camera:
+        raise HTTPException(status_code=404, detail="Camera not found")
+
+    log.info(f"--- WIPE: Starting wipe for camera {camera.name} ({camera.id}) ---")
+
+    # 1. Delete Events from Database
+    try:
+        num_events = db.query(models.Event).filter(models.Event.camera_id == camera_id).delete()
+        db.commit()
+        log.info(f"--- WIPE: Deleted {num_events} events from DB ---")
+    except Exception as e:
+        db.rollback()
+        log.error(f"--- WIPE ERROR (DB): {e} ---")
+        raise HTTPException(status_code=500, detail="Failed to clear database events")
+
+    # 2. Delete Files
+    try:
+        # A. Delete Event clips in root /recordings (format: event_{id}_*)
+        prefix = f"event_{camera_id}_"
+        deleted_files = 0
+        for f in os.listdir("/recordings"):
+            if f.startswith(prefix) and (f.endswith(".mp4") or f.endswith(".jpg") or f.endswith(".log")):
+                try:
+                    os.remove(os.path.join("/recordings", f))
+                    deleted_files += 1
+                except Exception as e:
+                    log.error(f"Failed to delete {f}: {e}")
+
+        # B. Delete Continuous Folder (/recordings/continuous/{id})
+        continuous_path = f"/recordings/continuous/{camera_id}"
+        if os.path.exists(continuous_path):
+             shutil.rmtree(continuous_path)
+             os.makedirs(continuous_path) # Recreate empty folder to prevent errors
+             
+        log.info(f"--- WIPE: File cleanup complete. Deleted {deleted_files} event files. ---")
+        return {"message": f"Successfully wiped all recordings for {camera.name}"}
+        
+    except Exception as e:
+        log.error(f"--- WIPE ERROR (FS): {e} ---")
+        raise HTTPException(status_code=500, detail="Failed to delete files from disk")
+
+
 @app.post("/api/cameras/reorder", status_code=status.HTTP_200_OK)
 async def reorder_cameras(
     req: ReorderRequest, 
@@ -640,6 +706,51 @@ async def get_event_summary(
     )
     return events
 
+# --- NEW: BATCH DELETE ---
+@app.post("/api/events/batch-delete", status_code=status.HTTP_200_OK)
+async def batch_delete_events(
+    req: BatchDeleteRequest,
+    current_user: models.User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db)
+):
+    if not req.event_ids:
+        return {"message": "No events to delete"}
+
+    # 1. Fetch events to get paths
+    events = db.query(models.Event).filter(
+        models.Event.id.in_(req.event_ids),
+        models.Event.user_id == current_user.id
+    ).all()
+
+    deleted_count = 0
+    
+    for event in events:
+        video_path = f"/{event.video_path}"
+        thumb_path = f"/{event.thumbnail_path}" if event.thumbnail_path else None
+        
+        try:
+            if os.path.exists(video_path):
+                os.remove(video_path)
+            if thumb_path and os.path.exists(thumb_path):
+                os.remove(thumb_path)
+            deleted_count += 1
+        except Exception as e:
+            log.error(f"Failed to delete file for event {event.id}: {e}")
+            
+    # 2. Delete from DB
+    try:
+        db.query(models.Event).filter(
+            models.Event.id.in_(req.event_ids),
+            models.Event.user_id == current_user.id
+        ).delete(synchronize_session=False)
+        db.commit()
+        
+        return {"message": f"Successfully deleted {deleted_count} events."}
+    except Exception as e:
+        db.rollback()
+        log.error(f"Batch delete DB error: {e}")
+        raise HTTPException(status_code=500, detail="Database error during batch delete")
+
 
 @app.delete("/api/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_event(
@@ -721,6 +832,161 @@ async def get_continuous_recordings(
 
     return found_files
 
+# --- NEW: Get Timeline Ranges Endpoint ---
+@app.get("/api/cameras/{camera_id}/recordings/timeline", response_model=List[RecordingSegment])
+async def get_continuous_timeline(
+    camera_id: int,
+    date_str: str, 
+    current_user: models.User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db)
+):
+    """
+    Returns start/end times of continuous recordings for a specific date
+    to be visualized on the timeline.
+    """
+    camera = db.query(models.Camera).filter(models.Camera.id == camera_id, models.Camera.owner_id == current_user.id).first()
+    if not camera:
+        raise HTTPException(status_code=404, detail="Camera not found")
+
+    recordings_dir = f"/recordings/continuous/{camera_id}"
+    if not os.path.exists(recordings_dir):
+        return []
+
+    target_date_prefix = date_str.replace("-", "") 
+    segments = []
+    
+    try:
+        # 1. Scan files
+        files = [f for f in os.listdir(recordings_dir) 
+                 if f.startswith(target_date_prefix) and f.endswith(".mp4")]
+        
+        for filename in files:
+            # 2. Parse Start Time from filename: YYYYMMDD-HHMMSS.mp4
+            time_part = filename.split("-")[1].split(".")[0] # HHMMSS
+            date_part = filename.split("-")[0] # YYYYMMDD
+            
+            # Create datetime object (Naive first, then assume it's in local time logic or just send ISO)
+            # We will construct an ISO string.
+            # Format: YYYY-MM-DDTHH:MM:SS
+            iso_start = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]}T{time_part[:2]}:{time_part[2:4]}:{time_part[4:6]}"
+            
+            # Calculate End Time (Start + 15 mins)
+            # We use datetime parsing to add the delta
+            dt_start = datetime.strptime(iso_start, "%Y-%m-%dT%H:%M:%S")
+            dt_end = dt_start + timedelta(minutes=15) # 900 seconds
+            
+            segments.append({
+                "start_time": dt_start.isoformat(),
+                "end_time": dt_end.isoformat(),
+                "filename": filename
+            })
+            
+    except Exception as e:
+        log.error(f"Error calculating timeline: {e}")
+        return []
+        
+    return segments
+
+# --- NEW: Delete Continuous Recording Endpoint ---
+@app.delete("/api/cameras/{camera_id}/recordings/{filename}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_continuous_recording(
+    camera_id: int,
+    filename: str,
+    current_user: models.User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db)
+):
+    # 1. Verify ownership
+    camera = db.query(models.Camera).filter(models.Camera.id == camera_id, models.Camera.owner_id == current_user.id).first()
+    if not camera:
+        raise HTTPException(status_code=404, detail="Camera not found")
+
+    # 2. Sanitize filename (prevent traversal)
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    # 3. Construct path and delete
+    file_path = f"/recordings/continuous/{camera_id}/{filename}"
+    
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+            log.info(f"Deleted continuous recording: {file_path}")
+        except Exception as e:
+            log.error(f"Failed to delete file {file_path}: {e}")
+            raise HTTPException(status_code=500, detail="Failed to delete file")
+    else:
+        raise HTTPException(status_code=404, detail="File not found")
+    return
+
+# --- WIPE ALL RECORDINGS ENDPOINT ---
+@app.delete("/api/system/recordings", status_code=status.HTTP_200_OK)
+async def wipe_all_recordings(
+    current_user: models.User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db)
+):
+    # 1. Clear Database
+    try:
+        num_events = db.query(models.Event).delete()
+        db.commit()
+        log.info(f"--- WIPE: Deleted {num_events} events from DB ---")
+    except Exception as e:
+        db.rollback()
+        log.error(f"--- WIPE ERROR (DB): {e} ---")
+        raise HTTPException(status_code=500, detail="Failed to clear database")
+
+    # 2. Clear Files
+    try:
+        # Delete Event clips/thumbs in root
+        for f in os.listdir("/recordings"):
+            path = os.path.join("/recordings", f)
+            if os.path.isfile(path) and (f.endswith(".mp4") or f.endswith(".jpg") or f.endswith(".log")):
+                os.remove(path)
+        
+        # Delete Continuous recordings
+        continuous_path = "/recordings/continuous"
+        if os.path.exists(continuous_path):
+             shutil.rmtree(continuous_path)
+             os.makedirs(continuous_path) # Recreate empty folder
+             
+        log.info("--- WIPE: File cleanup complete ---")
+        return {"message": f"Wiped {num_events} events and all recording files."}
+        
+    except Exception as e:
+        log.error(f"--- WIPE ERROR (FS): {e} ---")
+        raise HTTPException(status_code=500, detail="Failed to delete files")
+
+# --- System Settings Endpoints ---
+@app.get("/api/system/settings", response_model=SystemSettingsSchema)
+async def get_system_settings(
+    current_user: models.User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db)
+):
+    settings = db.query(models.SystemSettings).first()
+    if not settings:
+        # Create default settings if they don't exist
+        settings = models.SystemSettings(retention_days=30)
+        db.add(settings)
+        db.commit()
+        db.refresh(settings)
+    return settings
+
+@app.put("/api/system/settings", response_model=SystemSettingsSchema)
+async def update_system_settings(
+    new_settings: SystemSettingsSchema,
+    current_user: models.User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db)
+):
+    settings = db.query(models.SystemSettings).first()
+    if not settings:
+        settings = models.SystemSettings(retention_days=new_settings.retention_days)
+        db.add(settings)
+    else:
+        settings.retention_days = new_settings.retention_days
+    
+    db.commit()
+    db.refresh(settings)
+    return settings
+
 # --- System Health Endpoint ---
 @app.get("/api/system/health", response_model=SystemHealth)
 async def get_system_health(
@@ -746,6 +1012,53 @@ async def get_system_health(
     except Exception as e:
         log.error(f"Failed to get system stats: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch system health")
+
+# --- RESTART ENDPOINT ---
+@app.post("/api/system/restart", status_code=status.HTTP_200_OK)
+async def restart_services(
+    current_user: models.User = Depends(get_current_user_from_token)
+):
+    """
+    Restarts the application containers (Motion, MediaMTX, and Backend).
+    Uses the Docker socket mounted at /var/run/docker.sock.
+    """
+    try:
+        client = docker.from_env()
+        
+        my_hostname = os.environ.get("HOSTNAME", "")
+        containers = client.containers.list()
+        
+        restarted_count = 0
+        
+        # Find the motion-detector and mediamtx containers
+        for c in containers:
+            name = c.name.lower()
+            # Skip myself for now
+            if c.id.startswith(my_hostname) or my_hostname.startswith(c.id):
+                continue
+            
+            # Look for key services
+            if "motion-detector" in name or "mediamtx" in name:
+                log.info(f"Restarting container: {c.name}")
+                c.restart()
+                restarted_count += 1
+                
+        # Finally, kill myself (Docker restart policy will bring me back)
+        # We launch this as a background task so the HTTP response can finish
+        asyncio.create_task(suicide_task())
+        
+        return {"message": f"Restart initiated. {restarted_count} sibling services restarted."}
+
+    except Exception as e:
+        log.error(f"Failed to restart services: {e}")
+        raise HTTPException(status_code=500, detail=f"Restart failed: {str(e)}")
+
+async def suicide_task():
+    """Wait a moment for response to send, then exit."""
+    await asyncio.sleep(2)
+    log.info("--- RESTARTING BACKEND (Self-Termination) ---")
+    os._exit(0) # Hard exit, Docker will restart us
+
 
 # --- NEW: Download Endpoint ---
 @app.get("/api/download")

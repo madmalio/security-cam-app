@@ -10,3 +10,4 @@ python-multipart
 argon2-cffi
 httpx
 psutil
+docker

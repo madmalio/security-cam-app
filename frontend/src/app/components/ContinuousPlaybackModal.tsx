@@ -1,11 +1,22 @@
 "use client";
 
-import React, { Fragment, useState, useEffect } from "react";
+import React, { Fragment, useState, useEffect, useCallback } from "react";
 import { Dialog, Transition } from "@headlessui/react";
-import { X, Calendar, Play, Film, Download, Loader } from "lucide-react";
+import {
+  X,
+  Calendar,
+  Play,
+  Film,
+  Download,
+  Loader,
+  Trash2,
+  RefreshCw,
+} from "lucide-react";
 import { Camera } from "@/app/types";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { format } from "date-fns";
+import { toast } from "sonner";
+import ConfirmModal from "./ConfirmModal"; // <-- UPDATED
 
 interface Recording {
   filename: string;
@@ -19,9 +30,7 @@ interface ContinuousPlaybackModalProps {
   camera: Camera | null;
 }
 
-// --- FIX: Changed default port from 8887 to 8080 ---
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
-// --------------------------------------------------
 
 const getTodayString = () => {
   const today = new Date();
@@ -41,29 +50,61 @@ export default function ContinuousPlaybackModal({
   const [currentVideo, setCurrentVideo] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  useEffect(() => {
-    if (!camera || !isOpen) return;
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [recordingToDelete, setRecordingToDelete] = useState<string | null>(
+    null
+  );
 
-    const fetchRecordings = async () => {
-      setIsLoading(true);
+  const fetchRecordings = useCallback(
+    async (showLoadingIndicator = true) => {
+      if (!camera || !isOpen) return;
+
+      const startTime = Date.now();
+
+      if (showLoadingIndicator) setIsLoading(true);
+      else setIsRefreshing(true);
+
       try {
         const response = await api(
           `/api/cameras/${camera.id}/recordings?date_str=${selectedDate}`
         );
         if (!response || !response.ok) return;
         const data = await response.json();
+
+        const elapsedTime = Date.now() - startTime;
+        if (!showLoadingIndicator && elapsedTime < 700) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, 700 - elapsedTime)
+          );
+        }
+
         setRecordings(data);
-        setCurrentVideo(null);
       } catch (error) {
         console.error(error);
       } finally {
         setIsLoading(false);
+        setIsRefreshing(false);
       }
-    };
+    },
+    [api, camera, isOpen, selectedDate]
+  );
 
-    fetchRecordings();
-  }, [api, camera, selectedDate, isOpen]);
+  useEffect(() => {
+    fetchRecordings(true);
+    setCurrentVideo(null);
+  }, [fetchRecordings]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const intervalId = setInterval(() => {
+      fetchRecordings(false);
+    }, 30000);
+
+    return () => clearInterval(intervalId);
+  }, [isOpen, fetchRecordings]);
 
   const formatTime = (timeStr: string) => {
     return `${timeStr.slice(0, 2)}:${timeStr.slice(2, 4)}:${timeStr.slice(
@@ -92,147 +133,238 @@ export default function ContinuousPlaybackModal({
       document.body.removeChild(a);
     } catch (e) {
       console.error(e);
+      toast.error("Download failed");
     } finally {
       setIsDownloading(false);
     }
   };
 
+  const confirmDelete = (videoUrl: string) => {
+    setRecordingToDelete(videoUrl);
+    setIsDeleteConfirmOpen(true);
+  };
+
+  const handleDelete = async () => {
+    if (!recordingToDelete || !camera) return;
+    setIsDeleting(true);
+
+    const filename = recordingToDelete.split("/").pop();
+
+    try {
+      const response = await api(
+        `/api/cameras/${camera.id}/recordings/${filename}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      if (!response || !response.ok) {
+        throw new Error("Delete failed");
+      }
+
+      toast.success("Recording deleted");
+
+      setRecordings((prev) => prev.filter((r) => r.url !== recordingToDelete));
+
+      if (currentVideo === recordingToDelete) {
+        setCurrentVideo(null);
+      }
+
+      setIsDeleteConfirmOpen(false);
+      setRecordingToDelete(null);
+    } catch (e) {
+      console.error(e);
+      toast.error("Failed to delete recording");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
-    <Transition appear show={isOpen} as={Fragment}>
-      <Dialog as="div" className="relative z-50" onClose={onClose}>
-        <Transition.Child
-          as={Fragment}
-          enter="ease-out duration-300"
-          enterFrom="opacity-0"
-          enterTo="opacity-100"
-          leave="ease-in duration-200"
-          leaveFrom="opacity-100"
-          leaveTo="opacity-0"
-        >
-          <div className="fixed inset-0 bg-black/80" />
-        </Transition.Child>
+    <>
+      <Transition appear show={isOpen} as={Fragment}>
+        <Dialog as="div" className="relative z-50" onClose={onClose}>
+          <Transition.Child
+            as={Fragment}
+            enter="ease-out duration-300"
+            enterFrom="opacity-0"
+            enterTo="opacity-100"
+            leave="ease-in duration-200"
+            leaveFrom="opacity-100"
+            leaveTo="opacity-0"
+          >
+            <div className="fixed inset-0 bg-black/80" />
+          </Transition.Child>
 
-        <div className="fixed inset-0 overflow-y-auto">
-          <div className="flex min-h-full items-center justify-center p-4">
-            <Transition.Child
-              as={Fragment}
-              enter="ease-out duration-300"
-              enterFrom="opacity-0 scale-95"
-              enterTo="opacity-100 scale-100"
-              leave="ease-in duration-200"
-              leaveFrom="opacity-100 scale-100"
-              leaveTo="opacity-0 scale-95"
-            >
-              <Dialog.Panel className="w-full max-w-6xl transform overflow-hidden rounded-2xl bg-white text-left shadow-xl transition-all dark:bg-zinc-900">
-                <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-zinc-800">
-                  <div>
-                    <Dialog.Title className="text-lg font-medium text-gray-900 dark:text-white">
-                      24/7 History: {camera?.name}
-                    </Dialog.Title>
-                    <p className="text-sm text-gray-500">
-                      Viewing recordings for {selectedDate}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <input
-                      type="date"
-                      value={selectedDate}
-                      onChange={(e) => setSelectedDate(e.target.value)}
-                      className="rounded-md border-gray-300 bg-gray-50 px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
-                    />
-                    <button
-                      onClick={onClose}
-                      className="rounded-full p-1 hover:bg-gray-100 dark:hover:bg-zinc-800"
-                    >
-                      <X className="h-6 w-6 text-gray-500" />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex h-[650px] flex-col md:flex-row">
-                  {/* Video Player */}
-                  <div className="flex-1 bg-black flex flex-col">
-                    <div className="flex-1 flex items-center justify-center relative">
-                      {currentVideo ? (
-                        <video
-                          src={`${API_URL}/recordings/${currentVideo}`}
-                          controls
-                          autoPlay
-                          className="max-h-full max-w-full"
+          <div className="fixed inset-0 overflow-y-auto">
+            <div className="flex min-h-full items-center justify-center p-4">
+              <Transition.Child
+                as={Fragment}
+                enter="ease-out duration-300"
+                enterFrom="opacity-0 scale-95"
+                enterTo="opacity-100 scale-100"
+                leave="ease-in duration-200"
+                leaveFrom="opacity-100 scale-100"
+                leaveTo="opacity-0 scale-95"
+              >
+                <Dialog.Panel className="w-full max-w-6xl transform overflow-hidden rounded-2xl bg-white text-left shadow-xl transition-all dark:bg-zinc-900">
+                  <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-zinc-800">
+                    <div>
+                      <Dialog.Title className="text-lg font-medium text-gray-900 dark:text-white">
+                        24/7 History: {camera?.name}
+                      </Dialog.Title>
+                      <p className="text-sm text-gray-500">
+                        Viewing recordings for {selectedDate}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <button
+                        onClick={() => fetchRecordings(false)}
+                        disabled={isRefreshing || isLoading}
+                        className="rounded-full p-2 transition-all hover:bg-gray-100 dark:hover:bg-zinc-800"
+                        title="Refresh list"
+                      >
+                        <RefreshCw
+                          className={`h-5 w-5 text-gray-500 dark:text-zinc-400 ${
+                            isRefreshing ? "animate-spin" : ""
+                          }`}
                         />
-                      ) : (
-                        <div className="text-center text-gray-500">
-                          <Film className="mx-auto h-12 w-12 mb-2 opacity-50" />
-                          <p>Select a clip to play</p>
-                        </div>
-                      )}
-                    </div>
+                      </button>
 
-                    {/* Player Footer / Download */}
-                    {currentVideo && (
-                      <div className="bg-zinc-800 p-3 flex justify-end border-t border-zinc-700">
-                        <button
-                          onClick={handleDownload}
-                          disabled={isDownloading}
-                          className="flex items-center gap-2 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                        >
-                          {isDownloading ? (
-                            <Loader className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Download className="h-4 w-4" />
-                          )}
-                          {isDownloading ? "Downloading..." : "Download Clip"}
-                        </button>
+                      <input
+                        type="date"
+                        value={selectedDate}
+                        onChange={(e) => setSelectedDate(e.target.value)}
+                        className="rounded-md border-gray-300 bg-gray-50 px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+                      />
+                      <button
+                        onClick={onClose}
+                        className="rounded-full p-1 hover:bg-gray-100 dark:hover:bg-zinc-800"
+                      >
+                        <X className="h-6 w-6 text-gray-500" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex h-[650px] flex-col md:flex-row">
+                    <div className="flex-1 bg-black flex flex-col">
+                      <div className="flex-1 flex items-center justify-center relative">
+                        {currentVideo ? (
+                          <video
+                            src={`${API_URL}/recordings/${currentVideo}`}
+                            controls
+                            autoPlay
+                            className="max-h-full max-w-full"
+                          />
+                        ) : (
+                          <div className="text-center text-gray-500">
+                            <Film className="mx-auto h-12 w-12 mb-2 opacity-50" />
+                            <p>Select a clip to play</p>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
 
-                  {/* Playlist */}
-                  <div className="w-full md:w-80 border-l border-gray-200 bg-gray-50 dark:border-zinc-800 dark:bg-zinc-900 overflow-y-auto">
-                    <div className="p-4">
-                      <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-gray-500">
-                        Available Clips
-                      </h3>
-
-                      {isLoading ? (
-                        <p className="text-sm text-gray-500">Loading...</p>
-                      ) : recordings.length === 0 ? (
-                        <p className="text-sm text-gray-500">
-                          No recordings found for this date.
-                        </p>
-                      ) : (
-                        <div className="space-y-2">
-                          {recordings.map((rec) => (
-                            <button
-                              key={rec.filename}
-                              onClick={() => setCurrentVideo(rec.url)}
-                              className={`flex w-full items-center gap-3 rounded-lg p-3 text-left transition-colors ${
-                                currentVideo === rec.url
-                                  ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
-                                  : "hover:bg-gray-200 dark:hover:bg-zinc-800 dark:text-gray-300"
-                              }`}
-                            >
-                              <Play className="h-4 w-4 shrink-0" />
-                              <div className="flex-1 truncate">
-                                <span className="block text-sm font-medium">
-                                  {formatTime(rec.time)}
-                                </span>
-                                <span className="text-xs opacity-70">
-                                  15 min segment
-                                </span>
-                              </div>
-                            </button>
-                          ))}
+                      {currentVideo && (
+                        <div className="bg-zinc-800 p-3 flex justify-end border-t border-zinc-700 gap-2">
+                          <button
+                            onClick={() => confirmDelete(currentVideo)}
+                            className="flex items-center gap-2 rounded-md bg-red-600/20 px-3 py-1.5 text-sm font-medium text-red-500 hover:bg-red-600 hover:text-white transition-colors"
+                            title="Delete this clip"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Delete
+                          </button>
+                          <button
+                            onClick={handleDownload}
+                            disabled={isDownloading}
+                            className="flex items-center gap-2 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                          >
+                            {isDownloading ? (
+                              <Loader className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Download className="h-4 w-4" />
+                            )}
+                            {isDownloading ? "Downloading..." : "Download Clip"}
+                          </button>
                         </div>
                       )}
                     </div>
+
+                    <div className="w-full md:w-80 border-l border-gray-200 bg-gray-50 dark:border-zinc-800 dark:bg-zinc-900 overflow-y-auto">
+                      <div className="p-4">
+                        <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-gray-500">
+                          Available Clips
+                        </h3>
+
+                        {isLoading ? (
+                          <div className="flex justify-center py-4">
+                            <Loader className="h-6 w-6 animate-spin text-zinc-500" />
+                          </div>
+                        ) : recordings.length === 0 ? (
+                          <p className="text-sm text-gray-500">
+                            No recordings found for this date.
+                          </p>
+                        ) : (
+                          <div className="space-y-2">
+                            {recordings.map((rec) => (
+                              <div
+                                key={rec.filename}
+                                className={`flex w-full items-center justify-between rounded-lg p-2 transition-colors ${
+                                  currentVideo === rec.url
+                                    ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                                    : "hover:bg-gray-200 dark:hover:bg-zinc-800 dark:text-gray-300"
+                                }`}
+                              >
+                                <button
+                                  onClick={() => setCurrentVideo(rec.url)}
+                                  className="flex flex-1 items-center gap-3 text-left min-w-0"
+                                >
+                                  <Play className="h-4 w-4 shrink-0" />
+                                  <div className="flex-1 truncate">
+                                    <span className="block text-sm font-medium">
+                                      {formatTime(rec.time)}
+                                    </span>
+                                    <span className="text-xs opacity-70">
+                                      15 min segment
+                                    </span>
+                                  </div>
+                                </button>
+
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    confirmDelete(rec.url);
+                                  }}
+                                  className="ml-2 rounded-full p-2 text-gray-400 hover:bg-red-100 hover:text-red-600 dark:text-zinc-500 dark:hover:bg-red-900/30 dark:hover:text-red-400"
+                                  title="Delete Recording"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </Dialog.Panel>
-            </Transition.Child>
+                </Dialog.Panel>
+              </Transition.Child>
+            </div>
           </div>
-        </div>
-      </Dialog>
-    </Transition>
+        </Dialog>
+      </Transition>
+
+      <ConfirmModal
+        isOpen={isDeleteConfirmOpen}
+        onClose={() => setIsDeleteConfirmOpen(false)}
+        onConfirm={handleDelete}
+        title="Delete Recording"
+        confirmText="Delete"
+        cameraName={
+          recordingToDelete ? recordingToDelete.split("/").pop() || "" : ""
+        }
+        isLoading={isDeleting}
+      />
+    </>
   );
 }

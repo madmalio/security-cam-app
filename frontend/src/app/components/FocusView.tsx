@@ -9,7 +9,6 @@ interface FocusViewProps {
   selectedCamera: Camera;
   onSelectCamera: (camera: Camera) => void;
   onFocusClick: (camera: Camera) => void;
-  // No more token prop
 }
 
 export default function FocusView({
@@ -25,7 +24,9 @@ export default function FocusView({
       {/* Main Focus View (takes 3/4 width) */}
       <div className="lg:col-span-3 min-w-0">
         <div
-          className="relative rounded-lg shadow-lg overflow-hidden group"
+          // --- FIX: Added 'aspect-video' and 'bg-black' ---
+          className="relative aspect-video rounded-lg shadow-lg overflow-hidden group bg-black"
+          // ------------------------------------------------
           title={`View ${selectedCamera.name} (full stream)`}
         >
           <div
@@ -33,24 +34,34 @@ export default function FocusView({
             onClick={() => onFocusClick(selectedCamera)}
           />
           <LiveCameraView camera={selectedCamera} isMuted={false} />
+
+          {/* Overlay Name */}
+          <div className="absolute bottom-0 left-0 w-full bg-gradient-to-t from-black/90 via-black/60 to-transparent p-4 pointer-events-none">
+            <p className="text-lg font-bold text-white drop-shadow-md">
+              {selectedCamera.name}
+            </p>
+          </div>
         </div>
       </div>
 
       {/* Sidebar Camera List (takes 1/4 width) */}
       <div className="w-full flex-shrink-0 flex flex-col min-h-0">
-        <div className="flex flex-col gap-2 overflow-y-auto">
+        <div className="flex flex-col gap-4 overflow-y-auto pr-1">
           {otherCameras.map((cam) => (
             <div
               key={cam.id}
-              className="relative rounded-lg shadow-lg overflow-hidden group"
+              // --- FIX: Added 'aspect-video' here too for stability ---
+              className="relative aspect-video rounded-lg shadow-lg overflow-hidden group bg-black shrink-0"
+              // --------------------------------------------------------
             >
               <div
-                className="absolute inset-0 z-10 cursor-pointer"
+                className="absolute inset-0 z-10 cursor-pointer border-2 border-transparent hover:border-blue-500 transition-all rounded-lg"
                 onClick={() => onSelectCamera(cam)}
                 title={`Focus on ${cam.name}`}
               />
               <LiveCameraView camera={cam} isMuted={true} />
-              <div className="absolute bottom-0 left-0 w-full bg-black/50 p-1 pointer-events-none">
+
+              <div className="absolute bottom-0 left-0 w-full bg-black/50 p-2 pointer-events-none">
                 <p className="truncate text-xs font-medium text-white">
                   {cam.name}
                 </p>

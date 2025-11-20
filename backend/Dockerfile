@@ -1,9 +1,12 @@
 FROM python:3.10-slim
 
+# Install system dependencies
+# Added 'tzdata' for timezone support
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
     ffmpeg \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # --- MATCHING VOLUME MOUNT PATH ---

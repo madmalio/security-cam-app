@@ -1,18 +1,17 @@
 "use client";
 
 import React, { useState } from "react";
-import { Download, Loader } from "lucide-react";
+import { Download, Loader, Trash2 } from "lucide-react";
 import { useAuth } from "@/app/contexts/AuthContext";
 
 interface EventPlayerProps {
-  videoSrc: string; // e.g. "recordings/event_1_....mp4"
+  videoSrc: string;
+  onDelete?: () => void; // <-- New Prop
 }
 
-// --- FIX: Changed default port from 8887 to 8080 ---
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
-// --------------------------------------------------
 
-export default function EventPlayer({ videoSrc }: EventPlayerProps) {
+export default function EventPlayer({ videoSrc, onDelete }: EventPlayerProps) {
   const { api } = useAuth();
   const [isDownloading, setIsDownloading] = useState(false);
 
@@ -44,7 +43,19 @@ export default function EventPlayer({ videoSrc }: EventPlayerProps) {
 
   return (
     <div className="space-y-2">
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        {/* Delete Button */}
+        {onDelete && (
+          <button
+            onClick={onDelete}
+            className="flex items-center gap-2 rounded-md bg-red-600/10 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-600 hover:text-white dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-600 dark:hover:text-white transition-colors"
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete
+          </button>
+        )}
+
+        {/* Download Button */}
         <button
           onClick={handleDownload}
           disabled={isDownloading}

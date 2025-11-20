@@ -34,9 +34,8 @@ class Camera(Base):
     motion_type = Column(String, default="off", nullable=False)
     motion_roi = Column(String, nullable=True)
     motion_sensitivity = Column(Integer, default=50)
-    # --- NEW COLUMN ---
     continuous_recording = Column(Boolean, default=False, nullable=False)
-    # ------------------
+    
     owner = relationship("User", back_populates="cameras")
     events = relationship("Event", back_populates="camera", cascade="all, delete-orphan")
 
@@ -69,3 +68,10 @@ class Event(Base):
 
     camera = relationship("Camera", back_populates="events")
     owner = relationship("User", back_populates="events")
+
+# --- NEW TABLE ---
+class SystemSettings(Base):
+    __tablename__ = "system_settings"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    retention_days = Column(Integer, default=30) # Default to 30 days

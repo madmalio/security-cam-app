@@ -12,7 +12,6 @@ import logging
 import uvicorn
 from fastapi import FastAPI, HTTPException
 import numpy as np
-# --- REMOVED: import models --- 
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO,
@@ -70,6 +69,11 @@ class Event(Base):
     camera_id = Column(Integer, ForeignKey("cameras.id"))
     user_id = Column(Integer, ForeignKey("users.id"))
 
+class SystemSettings(Base):
+    __tablename__ = "system_settings"
+    id = Column(Integer, primary_key=True)
+    retention_days = Column(Integer, default=30)
+
 # ====================================================================
 #                 Internal API (Receives webhooks from 'motion')
 # ====================================================================
@@ -108,7 +112,7 @@ async def start_record_webhook(camera_id: int):
             camera_id=camera.id,
             user_id=camera.owner_id,
             start_time=now,
-            thumbnail_path=None # Don't set thumb yet
+            thumbnail_path=None
         )
         db.add(db_event)
         db.commit()
@@ -129,13 +133,18 @@ async def start_record_webhook(camera_id: int):
             video_abs_path
         ]
 
-        process = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        # Capture stderr to log file to debug crashes
+        log_path = f"/var/log/motion/event_ffmpeg_{camera.id}.log"
+        log_file = open(log_path, "w")
+
+        process = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=log_file)
         active_recordings[camera_id] = {
             "process": process,
             "event_id": db_event.id,
             "video_path": video_abs_path,
             "thumb_path": thumb_db_path,
-            "thumb_abs_path": f"/{thumb_db_path}"
+            "thumb_abs_path": f"/{thumb_db_path}",
+            "log_file": log_file
         }
         return {"message": f"Recording started for event {db_event.id}"}
         
@@ -157,14 +166,17 @@ async def stop_record_webhook(camera_id: int):
     recording = active_recordings.pop(camera_id)
     
     try:
+        # Close log file
+        if "log_file" in recording:
+            recording["log_file"].close()
+
         recording["process"].terminate()
-        stdout, stderr = recording["process"].communicate(timeout=30)
+        try:
+            recording["process"].communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            recording["process"].kill()
+            
         log.info(f"[{camera_id}] FFmpeg process terminated for Event {recording['event_id']}")
-        
-        stderr_output = stderr.decode('utf-8')
-        if "No such file or directory" in stderr_output or "Error" in stderr_output:
-             log.error(f"[{camera_id}] FFmpeg recording process failed: {stderr_output}")
-             return {"message": "Recording process failed"}
 
     except Exception as e:
         log.error(f"[{camera_id}] Error terminating ffmpeg: {e}. Killing.")
@@ -252,7 +264,7 @@ def start_continuous_recording(camera):
     ffmpeg_cmd = [
         'ffmpeg',
         '-rtsp_transport', 'tcp',
-        '-stimeout', '5000000', 
+        '-timeout', '5000000',
         '-i', camera.rtsp_url,
         '-c:v', 'copy',
         '-c:a', 'copy',
@@ -263,8 +275,12 @@ def start_continuous_recording(camera):
         output_pattern
     ]
     
-    process = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return process
+    # LOGGING FIX: Write stderr to a file so we can read it if it crashes
+    log_file_path = f"/var/log/motion/continuous_{camera.id}.err"
+    log_file = open(log_file_path, "w")
+    
+    process = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=log_file)
+    return process, log_file_path, log_file
 
 # ====================================================================
 #                 Disk Manager (Auto-Cleanup)
@@ -277,32 +293,57 @@ def disk_manager_loop():
 
     while True:
         try:
-            usage = shutil.disk_usage("/recordings")
+            db = SessionLocal()
             
+            # 1. GET RETENTION SETTINGS
+            settings = db.query(SystemSettings).first()
+            retention_days = settings.retention_days if settings else 30
+            
+            # Calculate cutoff time
+            cutoff_time = time.time() - (retention_days * 86400)
+            
+            # Cleanup loop
+            files = glob.glob("/recordings/**/*.mp4", recursive=True)
+            deleted_count = 0
+            
+            for file_path in files:
+                try:
+                    if os.path.getmtime(file_path) < cutoff_time:
+                        os.remove(file_path)
+                        # Also try to remove thumb/log
+                        base = os.path.splitext(file_path)[0]
+                        if os.path.exists(f"{base}.jpg"): os.remove(f"{base}.jpg")
+                        if os.path.exists(f"{base}.log"): os.remove(f"{base}.log")
+                        deleted_count += 1
+                except Exception as e:
+                    log.error(f"Error deleting old file {file_path}: {e}")
+
+            if deleted_count > 0:
+                log.info(f"Deleted {deleted_count} files older than {retention_days} days.")
+
+            # 2. DISK SPACE SAFETY NET
+            usage = shutil.disk_usage("/recordings")
             if usage.free < MIN_FREE_BYTES:
-                log.warning(f"LOW DISK SPACE: {usage.free / 1024**3:.2f} GB free. Starting cleanup...")
+                log.warning(f"LOW DISK SPACE: {usage.free / 1024**3:.2f} GB free. Starting emergency cleanup...")
+                # Re-scan for oldest files
                 files = glob.glob("/recordings/continuous/**/*.mp4", recursive=True)
                 files.sort(key=os.path.getmtime)
                 
-                deleted_count = 0
                 freed_bytes = 0
-                
                 for file_path in files:
                     try:
                         size = os.path.getsize(file_path)
                         os.remove(file_path)
-                        deleted_count += 1
                         freed_bytes += size
-                        
                         if (usage.free + freed_bytes) > TARGET_FREE_BYTES:
                             break
                     except Exception as e:
                         log.error(f"Error deleting file {file_path}: {e}")
-                
-                log.info(f"Cleanup complete. Deleted {deleted_count} files, freed {freed_bytes / 1024**3:.2f} GB.")
-            
+        
         except Exception as e:
             log.error(f"Error in disk_manager_loop: {e}")
+        finally:
+            db.close()
         
         time.sleep(60) 
 
@@ -389,6 +430,7 @@ def process_manager_loop():
         try:
             cameras = db.query(Camera).all()
             
+            # --- Motion Processes ---
             active_motion_cams = [c for c in cameras if c.motion_type == "active"]
             active_motion_ids = {c.id for c in active_motion_cams}
 
@@ -413,25 +455,39 @@ def process_manager_loop():
                             subprocess.run(["curl", "-X", "POST", f"http://localhost:8001/stop_record/{cam_id}"], timeout=5)
                          except: pass
 
+            # --- Continuous Recording Processes ---
             continuous_cams = [c for c in cameras if c.continuous_recording]
             continuous_ids = {c.id for c in continuous_cams}
 
             for cam in continuous_cams:
                 if cam.id not in running_continuous_processes:
-                    p = start_continuous_recording(cam)
-                    running_continuous_processes[cam.id] = p
+                    p, log_path, log_handle = start_continuous_recording(cam)
+                    running_continuous_processes[cam.id] = {"process": p, "log_path": log_path, "log_handle": log_handle}
                 else:
-                    p = running_continuous_processes[cam.id]
+                    entry = running_continuous_processes[cam.id]
+                    p = entry["process"]
                     if p.poll() is not None:
+                        # --- CRASH DETECTED: READ LOGS ---
                         log.warning(f"[{cam.id}] Continuous recording died. Restarting...")
-                        p = start_continuous_recording(cam)
-                        running_continuous_processes[cam.id] = p
+                        try:
+                            # Flush and close to ensure we can read the file
+                            entry["log_handle"].close() 
+                            with open(entry["log_path"], "r") as f:
+                                error_log = f.read()
+                            log.error(f"[{cam.id}] FFmpeg Crash Log:\n{error_log}")
+                        except Exception as e:
+                            log.error(f"[{cam.id}] Could not read error log: {e}")
+
+                        # Restart
+                        p, log_path, log_handle = start_continuous_recording(cam)
+                        running_continuous_processes[cam.id] = {"process": p, "log_path": log_path, "log_handle": log_handle}
 
             for cam_id in list(running_continuous_processes.keys()):
                 if cam_id not in continuous_ids:
                     log.info(f"[{cam_id}] Stopping 24/7 recording.")
-                    p = running_continuous_processes.pop(cam_id)
-                    p.terminate()
+                    entry = running_continuous_processes.pop(cam_id)
+                    entry["process"].terminate()
+                    entry["log_handle"].close()
 
         except Exception as e:
             log.error(f"ERROR in process_manager_loop: {e}")

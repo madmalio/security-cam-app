@@ -10,12 +10,15 @@ import React, {
 
 // Define the types for our settings
 export type DefaultView = "grid" | "focus";
+export type EventsView = "grid" | "list"; // <-- NEW TYPE
 export type GridColumns = 3 | 4 | 5;
 
 interface SettingsContextType {
   defaultView: DefaultView;
+  eventsView: EventsView; // <-- NEW STATE
   gridColumns: GridColumns;
   setDefaultView: (view: DefaultView) => void;
+  setEventsView: (view: EventsView) => void; // <-- NEW SETTER
   setGridColumns: (cols: GridColumns) => void;
 }
 
@@ -23,6 +26,11 @@ interface SettingsContextType {
 const getInitialView = (): DefaultView => {
   if (typeof window === "undefined") return "grid";
   return (localStorage.getItem("defaultView") as DefaultView) || "grid";
+};
+
+const getInitialEventsView = (): EventsView => {
+  if (typeof window === "undefined") return "grid";
+  return (localStorage.getItem("eventsView") as EventsView) || "grid";
 };
 
 const getInitialColumns = (): GridColumns => {
@@ -38,6 +46,8 @@ const SettingsContext = createContext<SettingsContextType | undefined>(
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [defaultView, setDefaultView] = useState<DefaultView>(getInitialView);
+  const [eventsView, setEventsView] =
+    useState<EventsView>(getInitialEventsView); // <-- NEW
   const [gridColumns, setGridColumns] =
     useState<GridColumns>(getInitialColumns);
 
@@ -47,6 +57,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, [defaultView]);
 
   useEffect(() => {
+    localStorage.setItem("eventsView", eventsView); // <-- SAVE NEW SETTING
+  }, [eventsView]);
+
+  useEffect(() => {
     localStorage.setItem("gridColumns", gridColumns.toString());
   }, [gridColumns]);
 
@@ -54,8 +68,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     <SettingsContext.Provider
       value={{
         defaultView,
+        eventsView,
         gridColumns,
         setDefaultView,
+        setEventsView,
         setGridColumns,
       }}
     >

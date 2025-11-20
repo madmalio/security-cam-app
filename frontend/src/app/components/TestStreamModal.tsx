@@ -32,7 +32,7 @@ export default function TestStreamModal({
         rtsp_substream_url: null,
         motion_roi: null,
         motion_sensitivity: 50,
-        continuous_recording: false, // <-- FIX: Added required field
+        continuous_recording: false,
       });
     } else {
       setTestCamera(null); // Clear camera when modal closes
@@ -81,13 +81,15 @@ export default function TestStreamModal({
                 <div className="mt-4">
                   <p className="text-sm text-gray-500 dark:text-zinc-400 mb-4">
                     The video player below will attempt to connect to your
-                    stream. If you see a "Connection Failed" error, please check
-                    your RTSP URL and credentials.
+                    stream. If you see a &quot;Connection Failed&quot; error,
+                    please check your RTSP URL and credentials.
                   </p>
 
                   {/* Render the player only when the camera object is set */}
                   {testCamera && (
-                    <LiveCameraView camera={testCamera} isMuted={false} />
+                    <div className="relative aspect-video w-full rounded-lg bg-black overflow-hidden shadow-lg">
+                      <LiveCameraView camera={testCamera} isMuted={false} />
+                    </div>
                   )}
                 </div>
               </Dialog.Panel>

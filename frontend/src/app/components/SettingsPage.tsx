@@ -1,7 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
-// --- IMPORT HardDrive ICON ---
+import React, { useState, useEffect } from "react";
 import {
   User,
   Camera,
@@ -15,7 +14,7 @@ import SecuritySettings from "./SecuritySettings";
 import CameraSettings from "./CameraSettings";
 import AppearanceSettings from "./AppearanceSettings";
 import MotionSettingsPage from "./MotionSettingsPage";
-import SystemSettings from "./SystemSettings"; // <-- IMPORT NEW COMPONENT
+import SystemSettings from "./SystemSettings";
 import { Camera as CameraType } from "@/app/types";
 
 type SettingsSection =
@@ -24,7 +23,7 @@ type SettingsSection =
   | "cameras"
   | "appearance"
   | "motion"
-  | "system"; // <-- ADD TYPE
+  | "system";
 
 interface SettingsPageProps {
   cameras: CameraType[];
@@ -38,6 +37,37 @@ export default function SettingsPage({
   const [currentSection, setCurrentSection] =
     useState<SettingsSection>("profile");
 
+  // --- FIX: Restore state from URL on mount ---
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const tab = params.get("settingsTab") as SettingsSection;
+      if (
+        tab &&
+        [
+          "profile",
+          "security",
+          "cameras",
+          "appearance",
+          "motion",
+          "system",
+        ].includes(tab)
+      ) {
+        setCurrentSection(tab);
+      }
+    }
+  }, []);
+
+  // --- FIX: Update URL when tab changes ---
+  const handleSectionChange = (section: SettingsSection) => {
+    setCurrentSection(section);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("settingsTab", section);
+      window.history.replaceState(null, "", url.toString());
+    }
+  };
+
   const NavItem = ({
     label,
     icon: Icon,
@@ -48,7 +78,7 @@ export default function SettingsPage({
     section: SettingsSection;
   }) => (
     <button
-      onClick={() => setCurrentSection(section)}
+      onClick={() => handleSectionChange(section)}
       className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium ${
         currentSection === section
           ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-white"
@@ -68,8 +98,7 @@ export default function SettingsPage({
         <NavItem label="Security" icon={ShieldCheck} section="security" />
         <NavItem label="Cameras" icon={Camera} section="cameras" />
         <NavItem label="Motion" icon={Scan} section="motion" />
-        <NavItem label="System" icon={HardDrive} section="system" />{" "}
-        {/* <-- NEW TAB */}
+        <NavItem label="System" icon={HardDrive} section="system" />
         <NavItem label="Appearance" icon={Palette} section="appearance" />
       </nav>
 
@@ -87,8 +116,7 @@ export default function SettingsPage({
             onCamerasUpdate={onCamerasUpdate}
           />
         )}
-        {currentSection === "system" && <SystemSettings />}{" "}
-        {/* <-- NEW COMPONENT */}
+        {currentSection === "system" && <SystemSettings />}
       </div>
     </div>
   );

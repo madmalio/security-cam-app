@@ -7,22 +7,23 @@ import { toast } from "sonner";
 import {
   Loader,
   Video,
-  Calendar,
-  Tag,
   PlayCircle,
   Trash2,
   LayoutGrid,
   List,
   Camera as CameraIcon,
+  CheckSquare,
+  Square,
 } from "lucide-react";
 import { format, differenceInSeconds } from "date-fns";
 import EventPlayerModal from "./EventPlayerModal";
-import ConfirmDeleteModal from "./ConfirmDeleteModal";
+import ConfirmModal from "./ConfirmModal";
 import EventTimeline from "./EventTimeline";
+import ContinuousPlaybackModal from "./ContinuousPlaybackModal";
+import { useSettings } from "@/app/contexts/SettingsContext";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
-// --- Helper: Calculate Duration String ---
 const getDurationString = (start: string, end: string | null) => {
   if (!end) return "Live";
   const diff = differenceInSeconds(new Date(end), new Date(start));
@@ -30,24 +31,45 @@ const getDurationString = (start: string, end: string | null) => {
   return `${Math.floor(diff / 60)}m ${diff % 60}s`;
 };
 
-// --- Component: Grid Card ---
+// --- Interfaces for sub-components ---
+interface EventItemProps {
+  event: Event;
+  onPlay: (event: Event) => void;
+  onDelete: (event: Event) => void;
+  isSelected: boolean;
+  onToggleSelect: (id: number) => void;
+}
+
 const EventCard = ({
   event,
   onPlay,
   onDelete,
-}: {
-  event: Event;
-  onPlay: (event: Event) => void;
-  onDelete: (event: Event) => void;
-}) => {
+  isSelected,
+  onToggleSelect,
+}: EventItemProps) => {
   const [thumbError, setThumbError] = useState(false);
   const thumbnailUrl =
     event.thumbnail_path && !thumbError
       ? `${API_URL}/${event.thumbnail_path}`
       : null;
-
   return (
-    <div className="flex flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm transition-all hover:shadow-md dark:border-zinc-700 dark:bg-zinc-800">
+    <div
+      className={`relative flex flex-col overflow-hidden rounded-lg border shadow-sm transition-all hover:shadow-md dark:bg-zinc-800 ${
+        isSelected
+          ? "border-blue-500 ring-1 ring-blue-500"
+          : "border-gray-200 dark:border-zinc-700"
+      }`}
+    >
+      {/* Checkbox Overlay */}
+      <div className="absolute top-2 left-2 z-20">
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={() => onToggleSelect(event.id)}
+          className="h-5 w-5 rounded border-gray-300 bg-white text-blue-600 focus:ring-blue-500 shadow-sm cursor-pointer"
+        />
+      </div>
+
       <div className="relative aspect-video w-full bg-gray-100 dark:bg-zinc-700">
         {thumbnailUrl ? (
           <img
@@ -100,25 +122,36 @@ const EventCard = ({
   );
 };
 
-// --- Component: List Item ---
 const EventListItem = ({
   event,
   onPlay,
   onDelete,
-}: {
-  event: Event;
-  onPlay: (event: Event) => void;
-  onDelete: (event: Event) => void;
-}) => {
+  isSelected,
+  onToggleSelect,
+}: EventItemProps) => {
   const [thumbError, setThumbError] = useState(false);
   const thumbnailUrl =
     event.thumbnail_path && !thumbError
       ? `${API_URL}/${event.thumbnail_path}`
       : null;
-
   return (
-    <div className="group flex items-center gap-4 rounded-lg border border-gray-200 bg-white p-3 shadow-sm transition-all hover:bg-gray-50 dark:border-zinc-700 dark:bg-zinc-800 dark:hover:bg-zinc-700/50">
-      {/* Thumbnail */}
+    <div
+      className={`group flex items-center gap-4 rounded-lg border p-3 shadow-sm transition-all hover:bg-gray-50 dark:bg-zinc-800 dark:hover:bg-zinc-700/50 ${
+        isSelected
+          ? "border-blue-500 bg-blue-50 dark:bg-blue-900/10"
+          : "border-gray-200 dark:border-zinc-700"
+      }`}
+    >
+      {/* Checkbox */}
+      <div className="flex items-center justify-center px-1">
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={() => onToggleSelect(event.id)}
+          className="h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+        />
+      </div>
+
       <div className="relative h-20 w-36 flex-shrink-0 overflow-hidden rounded-md bg-gray-100 dark:bg-zinc-700">
         {thumbnailUrl ? (
           <img
@@ -133,8 +166,6 @@ const EventListItem = ({
           </div>
         )}
       </div>
-
-      {/* Details */}
       <div className="flex min-w-0 flex-1 flex-col justify-center">
         <h4 className="truncate text-base font-semibold text-gray-900 dark:text-white">
           {event.camera.name}
@@ -148,8 +179,6 @@ const EventListItem = ({
           </span>
         </div>
       </div>
-
-      {/* Time & Actions */}
       <div className="flex flex-col items-end gap-2">
         <span className="text-sm font-medium text-gray-900 dark:text-white">
           {format(new Date(event.start_time), "h:mm a")}
@@ -184,27 +213,35 @@ const getTodayString = () => {
 
 interface EventsPageProps {
   cameras: Camera[];
+  initialCameraId?: number | null;
 }
 
-export default function EventsPage({ cameras }: EventsPageProps) {
+export default function EventsPage({
+  cameras,
+  initialCameraId,
+}: EventsPageProps) {
   const { api } = useAuth();
+  const { eventsView, setEventsView } = useSettings();
+
   const [events, setEvents] = useState<Event[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
-
-  // --- FIX: Correctly define state for selectedCameraId ---
-  const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null);
-  // -------------------------------------------------------
-
-  // Allow null here to fix the "Type error" from before
+  const [selectedCameraId, setSelectedCameraId] = useState<number | null>(
+    initialCameraId || null
+  );
   const [selectedDate, setSelectedDate] = useState<string | null>(
     getTodayString()
   );
 
+  // Selection State
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [isBatchDeleteOpen, setIsBatchDeleteOpen] = useState(false);
+  const [isBatchDeleting, setIsBatchDeleting] = useState(false);
+
+  // Player/Single Delete State
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
-
+  const [tempPlaybackCam, setTempPlaybackCam] = useState<Camera | null>(null);
   const [eventToDelete, setEventToDelete] = useState<Event | null>(null);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -216,6 +253,7 @@ export default function EventsPage({ cameras }: EventsPageProps) {
       return;
     }
     setEvents([]);
+    setSelectedIds(new Set()); // Reset selection on filter change
 
     const fetchEvents = async () => {
       setIsLoading(true);
@@ -224,7 +262,6 @@ export default function EventsPage({ cameras }: EventsPageProps) {
         params.append("camera_id", selectedCameraId.toString());
       }
       params.append("date_str", selectedDate);
-
       const localStart = new Date(selectedDate + "T00:00:00");
       const localEnd = new Date(selectedDate + "T23:59:59.999");
       params.append("start_ts", localStart.toISOString());
@@ -245,6 +282,44 @@ export default function EventsPage({ cameras }: EventsPageProps) {
     fetchEvents();
   }, [api, selectedCameraId, selectedDate]);
 
+  // --- Selection Logic ---
+  const toggleSelect = (id: number) => {
+    const newSet = new Set(selectedIds);
+    if (newSet.has(id)) newSet.delete(id);
+    else newSet.add(id);
+    setSelectedIds(newSet);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === events.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(events.map((e) => e.id)));
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    setIsBatchDeleting(true);
+    try {
+      const response = await api("/api/events/batch-delete", {
+        method: "POST",
+        body: JSON.stringify({ event_ids: Array.from(selectedIds) }),
+      });
+
+      if (!response || !response.ok) throw new Error("Batch delete failed");
+
+      toast.success(`Deleted ${selectedIds.size} events.`);
+      setEvents((prev) => prev.filter((e) => !selectedIds.has(e.id)));
+      setSelectedIds(new Set());
+      setIsBatchDeleteOpen(false);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setIsBatchDeleting(false);
+    }
+  };
+
+  // --- Existing Handlers ---
   const handlePlayClick = (event: Event) => {
     setSelectedEvent(event);
     setIsPlayerOpen(true);
@@ -261,6 +336,7 @@ export default function EventsPage({ cameras }: EventsPageProps) {
     setIsDeleteOpen(false);
     setEventToDelete(null);
   };
+
   const handleDeleteEvent = async () => {
     if (!eventToDelete) return;
     setIsDeleting(true);
@@ -282,7 +358,14 @@ export default function EventsPage({ cameras }: EventsPageProps) {
   const handleTimelineEventClick = (eventId: number) => {
     const eventToPlay = events.find((e) => e.id === eventId);
     if (eventToPlay) handlePlayClick(eventToPlay);
-    else toast.error("Could not find event. It may be on a different day.");
+    else toast.error("Could not find event.");
+  };
+  const handleSegmentClick = (filename: string, offsetSeconds: number) => {
+    if (!selectedCameraId) return;
+    const cam = cameras.find((c) => c.id === selectedCameraId);
+    if (cam) {
+      setTempPlaybackCam(cam);
+    }
   };
 
   const renderContent = () => {
@@ -302,29 +385,22 @@ export default function EventsPage({ cameras }: EventsPageProps) {
       );
     }
 
-    if (viewMode === "grid") {
-      return (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {events.map((event) => (
-            <EventCard
-              key={event.id}
-              event={event}
-              onPlay={handlePlayClick}
-              onDelete={openDeleteModal}
-            />
-          ))}
-        </div>
-      );
-    }
+    const ItemComponent = eventsView === "grid" ? EventCard : EventListItem;
+    const containerClass =
+      eventsView === "grid"
+        ? "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+        : "flex flex-col gap-2";
 
     return (
-      <div className="flex flex-col gap-2">
+      <div className={containerClass}>
         {events.map((event) => (
-          <EventListItem
+          <ItemComponent
             key={event.id}
             event={event}
             onPlay={handlePlayClick}
             onDelete={openDeleteModal}
+            isSelected={selectedIds.has(event.id)}
+            onToggleSelect={toggleSelect}
           />
         ))}
       </div>
@@ -373,25 +449,53 @@ export default function EventsPage({ cameras }: EventsPageProps) {
       <div className="flex-1 min-w-0 space-y-6">
         {/* Header / Filter Bar */}
         <div className="flex flex-col gap-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-800 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-lg font-semibold text-gray-900 dark:text-white">
-              {selectedCameraId
-                ? cameras.find((c) => c.id === selectedCameraId)?.name ||
-                  "Camera Events"
-                : "All Events"}
-            </h1>
-            <p className="text-sm text-gray-500 dark:text-zinc-400">
-              {format(new Date(selectedDate || ""), "MMMM d, yyyy")}
-            </p>
+          <div className="flex items-center gap-4">
+            {/* Select All Checkbox */}
+            <button
+              onClick={toggleSelectAll}
+              className="text-gray-500 hover:text-blue-600 dark:text-zinc-400 dark:hover:text-blue-400"
+              title="Select All"
+            >
+              {events.length > 0 && selectedIds.size === events.length ? (
+                <CheckSquare className="h-6 w-6" />
+              ) : (
+                <Square className="h-6 w-6" />
+              )}
+            </button>
+
+            {selectedIds.size > 0 ? (
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium text-gray-900 dark:text-white">
+                  {selectedIds.size} selected
+                </span>
+                <button
+                  onClick={() => setIsBatchDeleteOpen(true)}
+                  className="flex items-center gap-2 rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700"
+                >
+                  <Trash2 className="h-4 w-4" /> Delete
+                </button>
+              </div>
+            ) : (
+              <div>
+                <h1 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  {selectedCameraId
+                    ? cameras.find((c) => c.id === selectedCameraId)?.name ||
+                      "Camera Events"
+                    : "All Events"}
+                </h1>
+                <p className="text-sm text-gray-500 dark:text-zinc-400">
+                  {format(new Date(selectedDate || ""), "MMMM d, yyyy")}
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {/* View Toggles */}
             <div className="flex items-center rounded-lg border border-gray-200 bg-gray-50 p-1 dark:border-zinc-700 dark:bg-zinc-900">
               <button
-                onClick={() => setViewMode("grid")}
+                onClick={() => setEventsView("grid")}
                 className={`rounded p-1.5 transition-colors ${
-                  viewMode === "grid"
+                  eventsView === "grid"
                     ? "bg-white shadow-sm dark:bg-zinc-700 dark:text-white"
                     : "text-gray-500 hover:text-gray-700 dark:text-zinc-400 dark:hover:text-zinc-200"
                 }`}
@@ -400,9 +504,9 @@ export default function EventsPage({ cameras }: EventsPageProps) {
                 <LayoutGrid className="h-4 w-4" />
               </button>
               <button
-                onClick={() => setViewMode("list")}
+                onClick={() => setEventsView("list")}
                 className={`rounded p-1.5 transition-colors ${
-                  viewMode === "list"
+                  eventsView === "list"
                     ? "bg-white shadow-sm dark:bg-zinc-700 dark:text-white"
                     : "text-gray-500 hover:text-gray-700 dark:text-zinc-400 dark:hover:text-zinc-200"
                 }`}
@@ -411,8 +515,6 @@ export default function EventsPage({ cameras }: EventsPageProps) {
                 <List className="h-4 w-4" />
               </button>
             </div>
-
-            {/* Date Picker */}
             <input
               type="date"
               value={selectedDate || ""}
@@ -437,6 +539,7 @@ export default function EventsPage({ cameras }: EventsPageProps) {
               date={selectedDate}
               cameraId={selectedCameraId}
               onEventClick={handleTimelineEventClick}
+              onSegmentClick={handleSegmentClick}
             />
           </div>
         )}
@@ -453,17 +556,44 @@ export default function EventsPage({ cameras }: EventsPageProps) {
         </div>
       </div>
 
+      {/* Modals */}
       <EventPlayerModal
         isOpen={isPlayerOpen}
         onClose={handleClosePlayer}
         event={selectedEvent}
+        onEventDeleted={(id) => {
+          setEvents((prev) => prev.filter((e) => e.id !== id));
+        }}
       />
-      <ConfirmDeleteModal
+      <ContinuousPlaybackModal
+        isOpen={!!tempPlaybackCam}
+        onClose={() => setTempPlaybackCam(null)}
+        camera={tempPlaybackCam}
+      />
+      <ConfirmModal
         isOpen={isDeleteOpen}
         onClose={closeDeleteModal}
         onConfirm={handleDeleteEvent}
+        title="Delete Event"
+        confirmText="Delete"
         cameraName="this event recording"
-        isDeleting={isDeleting}
+        isLoading={isDeleting}
+      />
+
+      {/* Batch Delete Modal */}
+      <ConfirmModal
+        isOpen={isBatchDeleteOpen}
+        onClose={() => setIsBatchDeleteOpen(false)}
+        onConfirm={handleBatchDelete}
+        title={`Delete ${selectedIds.size} Events?`}
+        confirmText="Delete All"
+        message={
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            Are you sure you want to delete <strong>{selectedIds.size}</strong>{" "}
+            events? This cannot be undone.
+          </p>
+        }
+        isLoading={isBatchDeleting}
       />
     </div>
   );

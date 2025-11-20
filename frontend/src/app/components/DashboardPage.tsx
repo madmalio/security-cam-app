@@ -5,7 +5,6 @@ import { Camera, User } from "@/app/types";
 import { toast } from "sonner";
 import {
   Grid,
-  Monitor,
   PlusCircle,
   User as UserIcon,
   Video,
@@ -28,37 +27,48 @@ import FocusView from "./FocusView";
 import MosaicView from "./MosaicView";
 import FullscreenGridView from "./FullscreenGridView";
 import AddCameraModal from "./AddCameraModal";
-import ConfirmDeleteModal from "./ConfirmDeleteModal";
+import ConfirmModal from "./ConfirmModal";
+import EditCameraModal from "./EditCameraModal";
 import SettingsPage from "./SettingsPage";
-import EventsPage from "./EventsPage"; // <-- 1. This is what we're updating
+import EventsPage from "./EventsPage";
 
 type CurrentView = "dashboard" | "settings" | "events";
 
 const getInitialViewFromHash = (): CurrentView => {
   if (typeof window === "undefined") return "dashboard";
-  const hash = window.location.hash; // e.g., "#events"
+  const hash = window.location.hash;
   if (hash === "#events") return "events";
   if (hash === "#settings") return "settings";
-  return "dashboard"; // Default
+  return "dashboard";
 };
 
 export default function DashboardPage() {
   const { user, logout, api } = useAuth();
   if (!user) return null;
 
+  const { defaultView, gridColumns } = useSettings();
+
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [selectedCamera, setSelectedCamera] = useState<Camera | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [cameraToDelete, setCameraToDelete] = useState<Camera | null>(null);
+
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [cameraToEdit, setCameraToEdit] = useState<Camera | null>(null);
+
+  const [eventsInitialCameraId, setEventsInitialCameraId] = useState<
+    number | null
+  >(null);
 
   const [currentView, setCurrentView] = useState<CurrentView>(
     getInitialViewFromHash
   );
 
-  const { defaultView, gridColumns } = useSettings();
-
+  // View Mode State
   const [viewMode, setViewMode] = useState<"single" | "grid" | "focus">(
     defaultView
   );
@@ -68,12 +78,13 @@ export default function DashboardPage() {
 
   const [isMosaicFullscreen, setIsMosaicFullscreen] = useState(false);
   const [isGridFullscreen, setIsGridFullscreen] = useState(false);
+  const [hasRestoredState, setHasRestoredState] = useState(false);
 
+  // --- 1. Hash Routing (Main Navigation) ---
   useEffect(() => {
     const handleHashChange = () => {
       setCurrentView(getInitialViewFromHash());
     };
-
     window.addEventListener("hashchange", handleHashChange);
     return () => {
       window.removeEventListener("hashchange", handleHashChange);
@@ -82,13 +93,16 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const newHash = currentView === "dashboard" ? "" : `#${currentView}`;
-    if (newHash === "") {
-      window.history.replaceState(null, "", " ");
-    } else {
-      window.history.replaceState(null, "", newHash);
+    if (window.location.hash !== newHash) {
+      if (newHash === "") {
+        window.history.pushState(null, "", " ");
+      } else {
+        window.location.hash = newHash;
+      }
     }
   }, [currentView]);
 
+  // --- 2. Fullscreen Handling ---
   useEffect(() => {
     const handleFullscreenChange = () => {
       if (!document.fullscreenElement) {
@@ -102,6 +116,7 @@ export default function DashboardPage() {
     };
   }, []);
 
+  // --- 3. Data Fetching ---
   const fetchCameras = useCallback(async () => {
     try {
       setError(null);
@@ -112,9 +127,12 @@ export default function DashboardPage() {
         throw new Error("Failed to fetch cameras");
       }
       const data: Camera[] = await response.json();
-      setCameras(data.sort((a, b) => a.display_order - b.display_order));
-      if (data.length > 0 && !selectedCamera) {
-        setSelectedCamera(data[0]);
+      const sortedData = data.sort((a, b) => a.display_order - b.display_order);
+      setCameras(sortedData);
+
+      // Only default select if we haven't selected one yet
+      if (sortedData.length > 0 && !selectedCamera) {
+        setSelectedCamera(sortedData[0]);
       }
     } catch (err: any) {
       setError(err.message);
@@ -123,17 +141,53 @@ export default function DashboardPage() {
   }, [api, selectedCamera]);
 
   useEffect(() => {
-    if (currentView === "dashboard" || currentView === "settings") {
+    // Fetch cameras whenever the main view changes
+    if (["dashboard", "settings", "events"].includes(currentView)) {
       fetchCameras();
     }
-    // --- THIS IS THE FIX ---
-    // We also need to fetch cameras if we go *directly* to the events page
-    // so we can pass them to the tabs.
-    if (currentView === "events") {
-      fetchCameras();
-    }
-    // --- END FIX ---
   }, [currentView, fetchCameras]);
+
+  // --- 4. State Persistence (Dashboard View) ---
+
+  // Restore state from URL when cameras are loaded
+  useEffect(() => {
+    if (cameras.length > 0 && !hasRestoredState) {
+      const params = new URLSearchParams(window.location.search);
+      const urlView = params.get("dashboardView");
+      const urlCamId = params.get("camId");
+
+      if (urlView && ["grid", "focus", "single"].includes(urlView)) {
+        setViewMode(urlView as "grid" | "focus" | "single");
+        if (urlView !== "single") {
+          setLastMultiView(urlView as "grid" | "focus");
+        }
+      }
+
+      if (urlCamId) {
+        const foundCam = cameras.find((c) => c.id === Number(urlCamId));
+        if (foundCam) {
+          setSelectedCamera(foundCam);
+        }
+      }
+      setHasRestoredState(true);
+    }
+  }, [cameras, hasRestoredState]);
+
+  // Save state to URL whenever it changes
+  useEffect(() => {
+    if (!hasRestoredState) return; // Don't overwrite URL until we've read it once
+
+    if (currentView === "dashboard") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("dashboardView", viewMode);
+      if (selectedCamera) {
+        url.searchParams.set("camId", selectedCamera.id.toString());
+      }
+      window.history.replaceState(null, "", url.toString());
+    }
+  }, [viewMode, selectedCamera, currentView, hasRestoredState]);
+
+  // --- Handlers ---
 
   const toggleMosaicFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -146,6 +200,7 @@ export default function DashboardPage() {
       }
     }
   };
+
   const toggleGridFullscreen = () => {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen();
@@ -157,6 +212,7 @@ export default function DashboardPage() {
       }
     }
   };
+
   const handleCameraAdded = (newCamera: Camera) => {
     setCameras((prevCameras) =>
       [...prevCameras, newCamera].sort(
@@ -165,6 +221,7 @@ export default function DashboardPage() {
     );
     toast.success(`"${newCamera.name}" was added successfully!`);
   };
+
   const handleSelectAndGoToSingle = (camera: Camera) => {
     if (document.fullscreenElement) {
       document.exitFullscreen();
@@ -172,6 +229,7 @@ export default function DashboardPage() {
     setSelectedCamera(camera);
     setViewMode("single");
   };
+
   const handleSelectForFocus = (camera: Camera) => {
     setSelectedCamera(camera);
   };
@@ -214,9 +272,20 @@ export default function DashboardPage() {
       toast.error(`Failed to delete ${cameraToDelete.name}`);
     }
   };
+
   const openDeleteModal = (camera: Camera) => {
     setCameraToDelete(camera);
     setIsConfirmOpen(true);
+  };
+
+  const openEditModal = (camera: Camera) => {
+    setCameraToEdit(camera);
+    setIsEditModalOpen(true);
+  };
+
+  const handleGoToEvents = (camera: Camera) => {
+    setEventsInitialCameraId(camera.id);
+    setCurrentView("events");
   };
 
   const renderMainContent = () => {
@@ -228,10 +297,12 @@ export default function DashboardPage() {
           <SettingsPage cameras={cameras} onCamerasUpdate={fetchCameras} />
         );
       case "events":
-        // --- THIS IS THE CHANGE ---
-        // Pass the camera list to the EventsPage
-        return <EventsPage cameras={cameras} />;
-      // --- END CHANGE ---
+        return (
+          <EventsPage
+            cameras={cameras}
+            initialCameraId={eventsInitialCameraId}
+          />
+        );
       default:
         return null;
     }
@@ -278,6 +349,9 @@ export default function DashboardPage() {
         onCameraSelect={handleSelectAndGoToSingle}
         onAddCameraClick={() => setIsAddModalOpen(true)}
         gridColumns={gridColumns}
+        onViewEvents={handleGoToEvents}
+        onEditCamera={openEditModal}
+        onDeleteCamera={openDeleteModal}
       />
     );
   };
@@ -403,7 +477,10 @@ export default function DashboardPage() {
                   <HeadlessMenu.Item>
                     {({ active }) => (
                       <button
-                        onClick={() => setCurrentView("events")}
+                        onClick={() => {
+                          setEventsInitialCameraId(null);
+                          setCurrentView("events");
+                        }}
                         className={`${
                           active ? "bg-gray-100 dark:bg-zinc-700" : ""
                         } flex w-full items-center px-4 py-2 text-sm text-gray-700 dark:text-zinc-200`}
@@ -473,7 +550,17 @@ export default function DashboardPage() {
           onCameraAdded={handleCameraAdded}
         />
       )}
-      <ConfirmDeleteModal
+
+      {isEditModalOpen && (
+        <EditCameraModal
+          isOpen={isEditModalOpen}
+          onClose={() => setIsEditModalOpen(false)}
+          camera={cameraToEdit}
+          onCameraUpdated={fetchCameras}
+        />
+      )}
+
+      <ConfirmModal
         isOpen={isConfirmOpen}
         onClose={() => setIsConfirmOpen(false)}
         cameraName={cameraToDelete?.name || ""}
@@ -484,6 +571,8 @@ export default function DashboardPage() {
           setIsConfirmOpen(false);
           setCameraToDelete(null);
         }}
+        title="Delete Camera"
+        confirmText="Delete"
       />
     </div>
   );
