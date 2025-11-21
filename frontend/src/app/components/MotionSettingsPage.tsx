@@ -11,6 +11,7 @@ import {
   Loader,
   Copy,
   Check,
+  Cpu,
 } from "lucide-react";
 import LiveCameraView from "./LiveCameraView";
 import MotionGrid from "./MotionGrid";
@@ -41,7 +42,6 @@ export default function MotionSettingsPage({
   const [motionType, setMotionType] = useState<MotionType>("off");
   const [motionRoi, setMotionRoi] = useState("");
   const [rtspSubstreamUrl, setRtspSubstreamUrl] = useState("");
-  // --- NEW STATE ---
   const [sensitivity, setSensitivity] = useState(50);
 
   React.useEffect(() => {
@@ -49,7 +49,7 @@ export default function MotionSettingsPage({
       setMotionType(selectedCamera.motion_type);
       setMotionRoi(selectedCamera.motion_roi || "");
       setRtspSubstreamUrl(selectedCamera.rtsp_substream_url || "");
-      setSensitivity(selectedCamera.motion_sensitivity || 50); // Default to 50
+      setSensitivity(selectedCamera.motion_sensitivity || 50);
     }
   }, [selectedCamera]);
 
@@ -64,7 +64,7 @@ export default function MotionSettingsPage({
           motion_type: motionType,
           motion_roi: motionRoi,
           rtsp_substream_url: rtspSubstreamUrl || null,
-          motion_sensitivity: sensitivity, // <-- Send new value
+          motion_sensitivity: sensitivity,
         }),
       });
       if (!response) return;
@@ -90,7 +90,7 @@ export default function MotionSettingsPage({
   const handleCopy = () => {
     navigator.clipboard.writeText(webhookUrl);
     setIsCopied(true);
-    toast.success("Webhook URL copied to clipboard!");
+    toast.success("Webhook URL copied!");
     setTimeout(() => setIsCopied(false), 2000);
   };
 
@@ -101,19 +101,15 @@ export default function MotionSettingsPage({
           Motion Detection
         </h1>
         <p className="mt-1 text-gray-500 dark:text-zinc-400">
-          Configure motion detection for your cameras.
+          Configure how your system detects events.
         </p>
       </div>
 
       <div className="space-y-2">
-        <label
-          htmlFor="camera-select"
-          className="block text-sm font-medium text-gray-700 dark:text-zinc-300"
-        >
+        <label className="block text-sm font-medium text-gray-700 dark:text-zinc-300">
           Select Camera
         </label>
         <select
-          id="camera-select"
           value={selectedCameraId || ""}
           onChange={(e) => setSelectedCameraId(Number(e.target.value))}
           className="block w-full p-2 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
@@ -128,43 +124,44 @@ export default function MotionSettingsPage({
 
       {!selectedCamera ? (
         <p className="text-gray-500 dark:text-zinc-400">
-          Please add a camera to configure motion detection.
+          Please add a camera first.
         </p>
       ) : (
         <div className="space-y-8">
           <div className="space-y-6">
             <div>
               <label className="text-lg font-medium text-gray-900 dark:text-white">
-                Detection Type
+                Detection Mode
               </label>
               <div className="mt-2 flex flex-col sm:flex-row gap-2">
                 <MotionRadioCard
                   label="Off"
-                  desc="Do not record motion."
+                  desc="No event recording."
                   icon={ToggleLeft}
                   value="off"
                   currentType={motionType}
                   onChange={setMotionType}
                 />
                 <MotionRadioCard
-                  label="Webhook"
-                  desc="Use an external trigger."
-                  icon={Webhook}
-                  value="webhook"
+                  label="Pixel Motion"
+                  desc="Internal grid detection."
+                  icon={RadioTower}
+                  value="active"
                   currentType={motionType}
                   onChange={setMotionType}
                 />
                 <MotionRadioCard
-                  label="In-App"
-                  desc="Use active tracking."
-                  icon={RadioTower}
-                  value="active"
+                  label="AI / Webhook"
+                  desc="Use AI Object Detection."
+                  icon={Cpu} // Updated Icon
+                  value="webhook"
                   currentType={motionType}
                   onChange={setMotionType}
                 />
               </div>
             </div>
 
+            {/* --- Sensitivity (Active Only) --- */}
             {motionType === "active" && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-zinc-300 mb-2">
@@ -178,37 +175,38 @@ export default function MotionSettingsPage({
                   onChange={(e) => setSensitivity(Number(e.target.value))}
                   className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
                 />
-                <div className="flex justify-between text-xs text-gray-500 dark:text-zinc-400 mt-1">
-                  <span>Low (Only big movements)</span>
-                  <span>High (Tiny movements)</span>
-                </div>
               </div>
             )}
 
-            {motionType === "active" && (
-              <div>
+            {/* --- Substream Input (Active OR Webhook) --- */}
+            {(motionType === "active" || motionType === "webhook") && (
+              <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-100 dark:border-blue-800">
                 <label
                   htmlFor="substream-url"
-                  className="block text-sm font-medium text-gray-700 dark:text-zinc-300"
+                  className="block text-sm font-medium text-blue-900 dark:text-blue-200"
                 >
-                  RTSP URL (Substream)
-                  <span className="text-xs text-gray-400"> (Optional)</span>
+                  Substream URL (Recommended for AI/Performance)
                 </label>
+                <p className="text-xs text-blue-700 dark:text-blue-300 mb-2">
+                  Using a lower resolution stream (e.g. 640x480) drastically
+                  reduces CPU usage for detection.
+                </p>
                 <input
                   type="text"
                   id="substream-url"
                   value={rtspSubstreamUrl}
                   onChange={(e) => setRtspSubstreamUrl(e.target.value)}
-                  placeholder="Low-res URL for fast motion detection"
-                  className="mt-1 w-full rounded-md border border-gray-300 p-2 text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white dark:placeholder:text-zinc-500"
+                  placeholder="rtsp://.../substream"
+                  className="w-full rounded-md border border-blue-200 p-2 text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
                 />
               </div>
             )}
 
+            {/* --- Webhook Info --- */}
             {motionType === "webhook" && (
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300">
-                  Motion Webhook URL
+                  Internal Webhook URL
                 </label>
                 <div className="flex gap-2">
                   <input
@@ -225,7 +223,7 @@ export default function MotionSettingsPage({
                         ? "bg-green-600 text-white"
                         : "bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-zinc-600 dark:text-zinc-200 dark:hover:bg-zinc-500"
                     }`}
-                    title="Copy to clipboard"
+                    title="Copy"
                   >
                     {isCopied ? (
                       <Check className="h-5 w-5" />
@@ -234,18 +232,21 @@ export default function MotionSettingsPage({
                     )}
                   </button>
                 </div>
+                <p className="mt-2 text-xs text-gray-500">
+                  The built-in AI detector uses this automatically. You only
+                  need this if connecting external tools (like Blue Iris or
+                  HomeAssistant).
+                </p>
               </div>
             )}
           </div>
 
+          {/* --- Motion Grid (Active Only) --- */}
           {motionType === "active" && (
             <div className="space-y-4">
               <label className="text-lg font-medium text-gray-900 dark:text-white">
-                Motion Zone
+                Motion Grid
               </label>
-              <p className="text-sm text-gray-500 dark:text-zinc-400">
-                Click to select the grid squares to watch for motion.
-              </p>
               <div className="relative aspect-video w-full rounded-lg bg-black shadow-lg">
                 <LiveCameraView camera={selectedCamera} isMuted={true} />
                 <MotionGrid

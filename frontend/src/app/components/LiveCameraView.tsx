@@ -2,7 +2,14 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { Camera } from "@/app/types";
-import { Loader, AlertTriangle, VolumeX, Volume2, ZoomIn } from "lucide-react";
+import {
+  Loader,
+  AlertTriangle,
+  VolumeX,
+  Volume2,
+  ZoomIn,
+  RefreshCcw, // <-- New Icon
+} from "lucide-react";
 import { useAuth } from "@/app/contexts/AuthContext";
 
 const MEDIAMTX_URL =
@@ -27,7 +34,10 @@ export default function LiveCameraView({
   // --- Connection State ---
   const [connectionState, setConnectionState] = useState("idle");
   const [isForceMuted, setIsForceMuted] = useState(false);
-  const [retryAttempt, setRetryAttempt] = useState(0);
+
+  // Refresh State
+  const [refreshKey, setRefreshKey] = useState(0); // <-- Used to trigger re-connect
+  const [retryAttempt, setRetryAttempt] = useState(0); // Auto-retry counter
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // --- Zoom/Pan State ---
@@ -36,13 +46,17 @@ export default function LiveCameraView({
   const [isDragging, setIsDragging] = useState(false);
   const [startPan, setStartPan] = useState({ x: 0, y: 0 });
 
-  // Handle Unmute
   const handleUnmute = (e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent drag/click
+    e.stopPropagation();
     if (videoRef.current) {
       videoRef.current.muted = false;
       setIsForceMuted(false);
     }
+  };
+
+  const handleManualRefresh = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRefreshKey((prev) => prev + 1); // Triggers the useEffect
   };
 
   // --- WebRTC Connection Logic ---
@@ -52,9 +66,12 @@ export default function LiveCameraView({
       return;
     }
 
-    // Reset Zoom on camera change
-    setScale(1);
-    setPosition({ x: 0, y: 0 });
+    // Reset UI states on new connection
+    if (refreshKey === 0) {
+      // Only reset zoom on camera change, not manual refresh
+      setScale(1);
+      setPosition({ x: 0, y: 0 });
+    }
     setIsForceMuted(false);
 
     if (retryTimeoutRef.current) {
@@ -63,9 +80,12 @@ export default function LiveCameraView({
     }
 
     const connect = async () => {
+      // Cleanup old connection
       if (peerConnectionRef.current) {
         peerConnectionRef.current.close();
+        peerConnectionRef.current = null;
       }
+
       setConnectionState("connecting");
 
       try {
@@ -77,6 +97,7 @@ export default function LiveCameraView({
         pc.onconnectionstatechange = () => {
           const state = pc.connectionState;
           setConnectionState(state);
+          // Only auto-retry if we haven't hit a manual refresh
           if (["failed", "disconnected", "closed"].includes(state)) {
             if (!retryTimeoutRef.current) {
               retryTimeoutRef.current = setTimeout(() => {
@@ -100,9 +121,7 @@ export default function LiveCameraView({
                 if (!isMuted && videoRef.current) {
                   videoRef.current.muted = true;
                   setIsForceMuted(true);
-                  videoRef.current
-                    .play()
-                    .catch((e) => console.error("Muted autoplay failed", e));
+                  videoRef.current.play().catch(console.error);
                 }
               });
             }
@@ -113,12 +132,10 @@ export default function LiveCameraView({
         await pc.setLocalDescription(offer);
 
         const credsResponse = await api("/api/webrtc-creds");
-        if (!credsResponse || !credsResponse.ok) {
-          throw new Error("Failed to fetch credentials");
-        }
+        if (!credsResponse || !credsResponse.ok) throw new Error("Auth failed");
+
         const creds = await credsResponse.json();
         const credentials = btoa(`${creds.user}:${creds.pass}`);
-
         const whepEndpoint = `${MEDIAMTX_URL}/${camera.path}/whep`;
 
         const response = await fetch(whepEndpoint, {
@@ -130,9 +147,7 @@ export default function LiveCameraView({
           body: pc.localDescription?.sdp,
         });
 
-        if (!response.ok) {
-          throw new Error(`WHEP Error: ${response.status}`);
-        }
+        if (!response.ok) throw new Error(`WHEP ${response.status}`);
 
         const answerSdp = await response.text();
         await pc.setRemoteDescription({
@@ -140,7 +155,7 @@ export default function LiveCameraView({
           sdp: answerSdp,
         });
       } catch (error) {
-        console.error("WebRTC Error:", error);
+        console.error("Connection Error:", error);
         setConnectionState("failed");
       }
     };
@@ -149,33 +164,27 @@ export default function LiveCameraView({
 
     return () => {
       if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
-      if (peerConnectionRef.current) peerConnectionRef.current.close();
-      if (videoRef.current) videoRef.current.srcObject = null;
+      if (peerConnectionRef.current) {
+        peerConnectionRef.current.close();
+        peerConnectionRef.current = null;
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
     };
-  }, [camera, retryAttempt, api, isMuted]);
+  }, [camera, retryAttempt, refreshKey, api, isMuted]); // Added refreshKey dependency
 
-  // --- Zoom & Pan Handlers ---
-
+  // --- Zoom Handlers ---
   const handleWheel = (e: React.WheelEvent) => {
     e.stopPropagation();
-    // Prevent default page scroll if we are zoomed in
-    if (scale > 1) {
-      // e.preventDefault(); // Note: React synthetic events can't always prevent default passive listeners
-    }
-
     const zoomIntensity = 0.1;
     const direction = e.deltaY < 0 ? 1 : -1;
     const newScale = Math.min(
       Math.max(1, scale + direction * zoomIntensity),
       5
-    ); // Max 5x zoom
-
+    );
     setScale(newScale);
-
-    // If we zoomed out to 1x, reset position
-    if (newScale === 1) {
-      setPosition({ x: 0, y: 0 });
-    }
+    if (newScale === 1) setPosition({ x: 0, y: 0 });
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -189,32 +198,28 @@ export default function LiveCameraView({
   const handleMouseMove = (e: React.MouseEvent) => {
     if (isDragging && scale > 1) {
       e.preventDefault();
-      const newX = e.clientX - startPan.x;
-      const newY = e.clientY - startPan.y;
-      setPosition({ x: newX, y: newY });
+      setPosition({ x: e.clientX - startPan.x, y: e.clientY - startPan.y });
     }
   };
 
-  const handleMouseUp = () => {
-    setIsDragging(false);
-  };
+  const handleMouseUp = () => setIsDragging(false);
 
   const handleDoubleClick = (e: React.MouseEvent) => {
-    e.stopPropagation(); // Don't trigger grid click
+    e.stopPropagation();
     setScale(1);
     setPosition({ x: 0, y: 0 });
   };
 
-  // Determine cursor style
-  let cursorStyle = "cursor-default";
-  if (scale > 1) {
-    cursorStyle = isDragging ? "cursor-grabbing" : "cursor-grab";
-  }
-
   return (
     <div
       ref={containerRef}
-      className={`relative w-full h-full bg-black rounded-lg shadow-lg group overflow-hidden ${cursorStyle}`}
+      className={`relative w-full h-full bg-black rounded-lg shadow-lg group overflow-hidden ${
+        scale > 1
+          ? isDragging
+            ? "cursor-grabbing"
+            : "cursor-grab"
+          : "cursor-default"
+      }`}
       onWheel={handleWheel}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
@@ -237,56 +242,72 @@ export default function LiveCameraView({
         }}
       />
 
-      {/* Zoom Indicator (Only visible when zoomed) */}
-      {scale > 1 && (
-        <div className="absolute top-4 left-4 z-20 bg-black/60 text-white px-2 py-1 rounded text-xs font-mono pointer-events-none backdrop-blur-md">
-          {scale.toFixed(1)}x
-        </div>
-      )}
-
-      {/* Reset Zoom Button (Bottom Right, small) */}
-      {scale > 1 && (
+      {/* --- CONTROLS OVERLAY --- */}
+      <div className="absolute top-2 right-2 z-30 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+        {/* 1. Refresh Button */}
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            handleDoubleClick(e);
-          }}
-          className="absolute bottom-14 right-4 z-30 p-2 bg-black/60 text-white rounded-full hover:bg-blue-600 transition-colors backdrop-blur-md"
-          title="Reset Zoom"
+          onClick={handleManualRefresh}
+          className="p-2 bg-black/60 text-white rounded-full hover:bg-blue-600 transition-colors backdrop-blur-md"
+          title="Refresh Stream"
         >
-          <ZoomIn className="h-4 w-4" />
+          <RefreshCcw
+            className={`h-4 w-4 ${
+              connectionState === "connecting" ? "animate-spin" : ""
+            }`}
+          />
         </button>
-      )}
 
-      {/* Connection Status Overlay */}
+        {/* 2. Reset Zoom (Only if zoomed) */}
+        {scale > 1 && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleDoubleClick(e);
+            }}
+            className="p-2 bg-black/60 text-white rounded-full hover:bg-blue-600 transition-colors backdrop-blur-md"
+            title="Reset Zoom"
+          >
+            <ZoomIn className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
+      {/* --- STATUS OVERLAYS --- */}
+
       {connectionState !== "connected" && connectionState !== "new" && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 text-white z-10">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 text-white z-20">
           {connectionState === "connecting" ? (
-            <Loader className="w-8 h-8 animate-spin" />
+            <Loader className="w-8 h-8 animate-spin text-blue-500" />
           ) : (
             <>
-              <AlertTriangle className="w-8 h-8 text-red-400 mb-2" />
-              <p>Connection Failed</p>
+              <AlertTriangle className="w-8 h-8 text-red-500 mb-2" />
+              <p className="font-medium">Connection Lost</p>
+              <button
+                onClick={handleManualRefresh}
+                className="mt-4 px-4 py-2 bg-blue-600 rounded-md hover:bg-blue-700 text-sm font-medium flex items-center gap-2"
+              >
+                <RefreshCcw className="h-4 w-4" /> Retry
+              </button>
             </>
           )}
         </div>
       )}
 
-      {/* Unmute Overlay */}
+      {/* Unmute Button */}
       {isForceMuted && connectionState === "connected" && (
         <button
           onClick={handleUnmute}
-          className="absolute top-4 right-4 z-20 flex items-center gap-2 bg-black/60 text-white px-3 py-1.5 rounded-full hover:bg-blue-600 transition-colors backdrop-blur-sm cursor-pointer"
+          className="absolute top-4 left-4 z-30 flex items-center gap-2 bg-red-600/90 text-white px-3 py-1.5 rounded-full hover:bg-red-700 transition-colors shadow-lg animate-pulse"
         >
           <VolumeX className="h-4 w-4" />
-          <span className="text-xs font-medium">Tap to Unmute</span>
+          <span className="text-xs font-bold">Tap to Unmute</span>
         </button>
       )}
 
-      {/* Audio Icon */}
+      {/* Audio Icon (Passive) */}
       {!isMuted && !isForceMuted && connectionState === "connected" && (
-        <div className="absolute top-4 right-4 z-20 p-2 bg-black/20 rounded-full opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-          <Volume2 className="h-4 w-4 text-white/80" />
+        <div className="absolute bottom-4 right-4 z-20 p-2 bg-black/40 rounded-full pointer-events-none">
+          <Volume2 className="h-4 w-4 text-white/90" />
         </div>
       )}
     </div>

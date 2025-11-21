@@ -22,10 +22,10 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  # 2. Backend
+  # 2. Backend (Go)
   backend:
     build:
-      context: ./backend
+      context: ./backend-go # <--- Changed context
     ports:
       - "8080:8080"
     extra_hosts:
@@ -35,6 +35,7 @@ services:
     secrets:
       - db_url_secret
       - jwt_secret_key
+      - db_password # <--- Ensure this is listed here!
     depends_on:
       db:
         condition: service_healthy
@@ -43,10 +44,8 @@ services:
     networks:
       - cam_net
     restart: always
-    user: "root"
     volumes:
-      - ./recordings:/recordings # <--- CHANGED: Maps to real ./recordings folder
-      - ./backend/alembic:/code/alembic
+      - ./recordings:/recordings
       - /var/run/docker.sock:/var/run/docker.sock
 
   # 3. Database
@@ -92,26 +91,16 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  # 5. Motion Detector
-  motion-detector:
+  # 5. AI Detector
+  ai-detector:
     build:
-      context: ./motion-detector
+      context: ./ai-detector
     restart: always
-    environment:
-      - TZ=${TZ:-UTC}
     depends_on:
-      db:
-        condition: service_healthy
-      mediamtx:
-        condition: service_started
+      - backend
+      - mediamtx
     networks:
       - cam_net
-    secrets:
-      - db_url_secret
-    security_opt:
-      - no-new-privileges:true
-    volumes:
-      - ./recordings:/recordings # <--- CHANGED
 
 networks:
   cam_net:
@@ -119,7 +108,6 @@ networks:
 
 volumes:
   db_data:
-  # recordings_data: {}  <--- REMOVE THIS LINE (We don't use the internal volume anymore)
 
 secrets:
   db_password:
