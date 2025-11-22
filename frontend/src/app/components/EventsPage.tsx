@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, Fragment } from "react";
 import { useAuth } from "@/app/contexts/AuthContext";
+import { useSettings } from "@/app/contexts/SettingsContext";
 import { Event, Camera } from "@/app/types";
 import { toast } from "sonner";
 import {
@@ -20,7 +21,6 @@ import EventPlayerModal from "./EventPlayerModal";
 import ConfirmModal from "./ConfirmModal";
 import EventTimeline from "./EventTimeline";
 import ContinuousPlaybackModal from "./ContinuousPlaybackModal";
-import { useSettings } from "@/app/contexts/SettingsContext";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
@@ -31,7 +31,6 @@ const getDurationString = (start: string, end: string | null) => {
   return `${Math.floor(diff / 60)}m ${diff % 60}s`;
 };
 
-// --- Interfaces for sub-components ---
 interface EventItemProps {
   event: Event;
   onPlay: (event: Event) => void;
@@ -60,7 +59,6 @@ const EventCard = ({
           : "border-gray-200 dark:border-zinc-700"
       }`}
     >
-      {/* Checkbox Overlay */}
       <div className="absolute top-2 left-2 z-20">
         <input
           type="checkbox"
@@ -93,8 +91,9 @@ const EventCard = ({
             <h3 className="font-semibold text-gray-900 dark:text-white">
               {format(new Date(event.start_time), "h:mm:ss a")}
             </h3>
+            {/* FIX: Safe Access to Camera Name */}
             <p className="text-xs text-gray-500 dark:text-zinc-400">
-              {event.camera.name}
+              {event.camera?.name || "Unknown Camera"}
             </p>
           </div>
           <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
@@ -142,7 +141,6 @@ const EventListItem = ({
           : "border-gray-200 dark:border-zinc-700"
       }`}
     >
-      {/* Checkbox */}
       <div className="flex items-center justify-center px-1">
         <input
           type="checkbox"
@@ -167,8 +165,9 @@ const EventListItem = ({
         )}
       </div>
       <div className="flex min-w-0 flex-1 flex-col justify-center">
+        {/* FIX: Safe Access to Camera Name */}
         <h4 className="truncate text-base font-semibold text-gray-900 dark:text-white">
-          {event.camera.name}
+          {event.camera?.name || "Unknown Camera"}
         </h4>
         <div className="mt-1 flex items-center gap-2">
           <span className="inline-flex items-center rounded bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/30 dark:text-green-300">
@@ -238,13 +237,23 @@ export default function EventsPage({
   const [isBatchDeleteOpen, setIsBatchDeleteOpen] = useState(false);
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
 
-  // Player/Single Delete State
+  // Player & Playback State
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
   const [tempPlaybackCam, setTempPlaybackCam] = useState<Camera | null>(null);
+
+  // --- FIX: State for timeline click playback ---
+  const [tempPlaybackFile, setTempPlaybackFile] = useState<string | null>(null);
+  // --------------------------------------------
+
   const [eventToDelete, setEventToDelete] = useState<Event | null>(null);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Sync initialCameraId prop to state if it changes
+  useEffect(() => {
+    if (initialCameraId) setSelectedCameraId(initialCameraId);
+  }, [initialCameraId]);
 
   useEffect(() => {
     if (!selectedDate) {
@@ -253,7 +262,7 @@ export default function EventsPage({
       return;
     }
     setEvents([]);
-    setSelectedIds(new Set()); // Reset selection on filter change
+    setSelectedIds(new Set());
 
     const fetchEvents = async () => {
       setIsLoading(true);
@@ -262,6 +271,7 @@ export default function EventsPage({
         params.append("camera_id", selectedCameraId.toString());
       }
       params.append("date_str", selectedDate);
+
       const localStart = new Date(selectedDate + "T00:00:00");
       const localEnd = new Date(selectedDate + "T23:59:59.999");
       params.append("start_ts", localStart.toISOString());
@@ -282,7 +292,6 @@ export default function EventsPage({
     fetchEvents();
   }, [api, selectedCameraId, selectedDate]);
 
-  // --- Selection Logic ---
   const toggleSelect = (id: number) => {
     const newSet = new Set(selectedIds);
     if (newSet.has(id)) newSet.delete(id);
@@ -319,7 +328,6 @@ export default function EventsPage({
     }
   };
 
-  // --- Existing Handlers ---
   const handlePlayClick = (event: Event) => {
     setSelectedEvent(event);
     setIsPlayerOpen(true);
@@ -328,6 +336,7 @@ export default function EventsPage({
     setIsPlayerOpen(false);
     setSelectedEvent(null);
   };
+
   const openDeleteModal = (event: Event) => {
     setEventToDelete(event);
     setIsDeleteOpen(true);
@@ -355,16 +364,21 @@ export default function EventsPage({
       setIsDeleting(false);
     }
   };
+
+  // Clicking a BLUE event bar
   const handleTimelineEventClick = (eventId: number) => {
     const eventToPlay = events.find((e) => e.id === eventId);
     if (eventToPlay) handlePlayClick(eventToPlay);
     else toast.error("Could not find event.");
   };
+
+  // Clicking a GRAY continuous bar
   const handleSegmentClick = (filename: string, offsetSeconds: number) => {
     if (!selectedCameraId) return;
     const cam = cameras.find((c) => c.id === selectedCameraId);
     if (cam) {
-      setTempPlaybackCam(cam);
+      setTempPlaybackFile(filename); // 1. Save filename
+      setTempPlaybackCam(cam); // 2. Open modal
     }
   };
 
@@ -447,10 +461,9 @@ export default function EventsPage({
 
       {/* MAIN CONTENT */}
       <div className="flex-1 min-w-0 space-y-6">
-        {/* Header / Filter Bar */}
+        {/* Header */}
         <div className="flex flex-col gap-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-800 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
-            {/* Select All Checkbox */}
             <button
               onClick={toggleSelectAll}
               className="text-gray-500 hover:text-blue-600 dark:text-zinc-400 dark:hover:text-blue-400"
@@ -532,14 +545,14 @@ export default function EventsPage({
           </div>
         </div>
 
-        {/* Timeline */}
-        {selectedDate && (
+        {/* Timeline - Only show if a specific camera is selected */}
+        {selectedDate && selectedCameraId && (
           <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-800">
             <EventTimeline
               date={selectedDate}
               cameraId={selectedCameraId}
               onEventClick={handleTimelineEventClick}
-              onSegmentClick={handleSegmentClick}
+              onSegmentClick={handleSegmentClick} // Wired up!
             />
           </div>
         )}
@@ -556,7 +569,6 @@ export default function EventsPage({
         </div>
       </div>
 
-      {/* Modals */}
       <EventPlayerModal
         isOpen={isPlayerOpen}
         onClose={handleClosePlayer}
@@ -565,11 +577,19 @@ export default function EventsPage({
           setEvents((prev) => prev.filter((e) => e.id !== id));
         }}
       />
+
+      {/* --- FIX: Wired up Continuous Modal with props --- */}
       <ContinuousPlaybackModal
         isOpen={!!tempPlaybackCam}
-        onClose={() => setTempPlaybackCam(null)}
+        onClose={() => {
+          setTempPlaybackCam(null);
+          setTempPlaybackFile(null);
+        }}
         camera={tempPlaybackCam}
+        initialDate={selectedDate}
+        initialFile={tempPlaybackFile}
       />
+
       <ConfirmModal
         isOpen={isDeleteOpen}
         onClose={closeDeleteModal}
@@ -579,8 +599,6 @@ export default function EventsPage({
         cameraName="this event recording"
         isLoading={isDeleting}
       />
-
-      {/* Batch Delete Modal */}
       <ConfirmModal
         isOpen={isBatchDeleteOpen}
         onClose={() => setIsBatchDeleteOpen(false)}

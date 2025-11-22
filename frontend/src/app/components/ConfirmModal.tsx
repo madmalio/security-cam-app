@@ -8,15 +8,11 @@ interface ConfirmModalProps {
   isOpen: boolean;
   onClose: () => void;
   onConfirm: () => void;
-  isLoading?: boolean; // Renamed from isDeleting to be more generic
-
-  // Customization props
+  isLoading?: boolean;
   title?: string;
   confirmText?: string;
-  confirmColor?: "red" | "blue"; // Added color option
+  cameraName?: string; // Legacy support
   message?: ReactNode;
-  // Legacy support (optional, can be removed if you update all calls)
-  cameraName?: string;
 }
 
 export default function ConfirmModal({
@@ -26,11 +22,9 @@ export default function ConfirmModal({
   isLoading = false,
   title = "Confirm Action",
   confirmText = "Confirm",
-  confirmColor = "red",
   cameraName,
   message,
 }: ConfirmModalProps) {
-  // Default content if no message is passed (Legacy behavior)
   const content = message ? (
     message
   ) : (
@@ -40,11 +34,6 @@ export default function ConfirmModal({
       This action cannot be undone.
     </p>
   );
-
-  const buttonColorClass =
-    confirmColor === "red"
-      ? "bg-red-600 hover:bg-red-700"
-      : "bg-blue-600 hover:bg-blue-700";
 
   return (
     <Transition appear show={isOpen} as={Fragment}>
@@ -72,7 +61,7 @@ export default function ConfirmModal({
               leaveFrom="opacity-100 scale-100"
               leaveTo="opacity-0 scale-95"
             >
-              <Dialog.Panel className="w-full max-w-md transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all dark:bg-gray-800">
+              <Dialog.Panel className="w-full max-w-md transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all dark:bg-zinc-800">
                 <Dialog.Title
                   as="h3"
                   className="text-lg font-medium leading-6 text-gray-900 dark:text-white"
@@ -84,7 +73,7 @@ export default function ConfirmModal({
                 <div className="mt-6 flex justify-end space-x-3">
                   <button
                     type="button"
-                    className="rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-900 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600"
+                    className="rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-900 hover:bg-gray-100 dark:border-zinc-600 dark:bg-zinc-700 dark:text-white dark:hover:bg-zinc-600"
                     onClick={onClose}
                     disabled={isLoading}
                   >
@@ -92,7 +81,7 @@ export default function ConfirmModal({
                   </button>
                   <button
                     type="button"
-                    className={`flex w-24 items-center justify-center rounded-lg px-5 py-2.5 text-center text-sm font-medium text-white disabled:opacity-50 ${buttonColorClass}`}
+                    className="flex w-24 items-center justify-center rounded-lg bg-red-600 px-5 py-2.5 text-center text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
                     onClick={onConfirm}
                     disabled={isLoading}
                   >

@@ -5,11 +5,11 @@ import (
 )
 
 type User struct {
-	ID             uint      `gorm:"primaryKey" json:"id"`
-	Email          string    `gorm:"uniqueIndex" json:"email"`
-	HashedPassword string    `json:"-"`
-	DisplayName    string    `json:"display_name"`
-	GravatarHash   string    `json:"gravatar_hash"`
+	ID              uint      `gorm:"primaryKey" json:"id"`
+	Email           string    `gorm:"uniqueIndex" json:"email"`
+	HashedPassword  string    `json:"-"`
+	DisplayName     string    `json:"display_name"`
+	GravatarHash    string    `json:"gravatar_hash"`
 	TokensValidFrom time.Time `json:"tokens_valid_from"`
 }
 
@@ -25,8 +25,11 @@ type Camera struct {
 	MotionROI           string `json:"motion_roi"`
 	MotionSensitivity   int    `json:"motion_sensitivity"`
 	ContinuousRecording bool   `json:"continuous_recording"`
-
-	// --- RELATIONSHIPS ---
+	
+	// --- REQUIRED FOR SELECTION ---
+	AIClasses string `json:"ai_classes"` 
+	
+	// --- REQUIRED FOR CRASH FIX ---
 	Events []Event `gorm:"foreignKey:CameraID;constraint:OnDelete:CASCADE;" json:"-"`
 }
 
@@ -40,7 +43,7 @@ type Event struct {
 	VideoPath     string    `json:"video_path"`
 	ThumbnailPath string    `json:"thumbnail_path"`
 
-	// --- RELATIONSHIPS ---
+	// --- REQUIRED FOR CRASH FIX ---
 	Camera Camera `gorm:"foreignKey:CameraID" json:"camera"`
 }
 

@@ -10,15 +10,15 @@ import React, {
 
 // Define the types for our settings
 export type DefaultView = "grid" | "focus";
-export type EventsView = "grid" | "list"; // <-- NEW TYPE
+export type EventsView = "grid" | "list"; // <-- Added
 export type GridColumns = 3 | 4 | 5;
 
 interface SettingsContextType {
   defaultView: DefaultView;
-  eventsView: EventsView; // <-- NEW STATE
+  eventsView: EventsView; // <-- Added
   gridColumns: GridColumns;
   setDefaultView: (view: DefaultView) => void;
-  setEventsView: (view: EventsView) => void; // <-- NEW SETTER
+  setEventsView: (view: EventsView) => void; // <-- Added
   setGridColumns: (cols: GridColumns) => void;
 }
 
@@ -47,7 +47,7 @@ const SettingsContext = createContext<SettingsContextType | undefined>(
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [defaultView, setDefaultView] = useState<DefaultView>(getInitialView);
   const [eventsView, setEventsView] =
-    useState<EventsView>(getInitialEventsView); // <-- NEW
+    useState<EventsView>(getInitialEventsView); // <-- Added
   const [gridColumns, setGridColumns] =
     useState<GridColumns>(getInitialColumns);
 
@@ -57,7 +57,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, [defaultView]);
 
   useEffect(() => {
-    localStorage.setItem("eventsView", eventsView); // <-- SAVE NEW SETTING
+    localStorage.setItem("eventsView", eventsView); // <-- Added
   }, [eventsView]);
 
   useEffect(() => {

@@ -2,7 +2,14 @@
 
 import React, { useState, useEffect, FormEvent, Fragment } from "react";
 import { Camera } from "@/app/types";
-import { Loader, X, Save, Trash2, AlertTriangle } from "lucide-react";
+import {
+  Loader,
+  X,
+  Save,
+  Trash2,
+  AlertTriangle,
+  HardDrive,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, Transition } from "@headlessui/react";
 import { useAuth } from "@/app/contexts/AuthContext";
@@ -26,10 +33,10 @@ export default function EditCameraModal({
   const [rtspUrl, setRtspUrl] = useState("");
   const [substreamUrl, setSubstreamUrl] = useState("");
   const [continuousRecording, setContinuousRecording] = useState(false);
+  // Keep track of other fields to prevent overwriting with defaults if backend isn't perfect
+  const [aiClasses, setAiClasses] = useState("");
 
   const [isLoading, setIsLoading] = useState(false);
-
-  // Wipe State
   const [isWiping, setIsWiping] = useState(false);
   const [isConfirmWipeOpen, setIsConfirmWipeOpen] = useState(false);
 
@@ -39,6 +46,7 @@ export default function EditCameraModal({
       setRtspUrl(camera.rtsp_url);
       setSubstreamUrl(camera.rtsp_substream_url || "");
       setContinuousRecording(camera.continuous_recording);
+      setAiClasses(camera.ai_classes || "");
     }
   }, [camera, isOpen]);
 
@@ -55,6 +63,7 @@ export default function EditCameraModal({
           rtsp_url: rtspUrl,
           rtsp_substream_url: substreamUrl || null,
           continuous_recording: continuousRecording,
+          ai_classes: aiClasses, // Preserve existing classes
         }),
       });
 
@@ -180,24 +189,45 @@ export default function EditCameraModal({
                       />
                     </div>
 
-                    <div className="flex items-center gap-3 rounded-lg border border-gray-200 p-3 dark:border-zinc-700">
-                      <div className="flex h-5 items-center">
-                        <input
-                          id="continuous"
-                          type="checkbox"
-                          checked={continuousRecording}
-                          onChange={(e) =>
-                            setContinuousRecording(e.target.checked)
-                          }
-                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700"
-                        />
+                    {/* 24/7 Recording Toggle with Warning */}
+                    <div
+                      className={`rounded-lg border p-4 transition-colors ${
+                        continuousRecording
+                          ? "border-amber-200 bg-amber-50 dark:border-amber-900/30 dark:bg-amber-900/10"
+                          : "border-gray-200 dark:border-zinc-700"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-5 items-center">
+                          <input
+                            id="continuous"
+                            type="checkbox"
+                            checked={continuousRecording}
+                            onChange={(e) =>
+                              setContinuousRecording(e.target.checked)
+                            }
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700"
+                          />
+                        </div>
+                        <label
+                          htmlFor="continuous"
+                          className="text-sm font-medium text-gray-900 dark:text-white"
+                        >
+                          Enable 24/7 Recording
+                        </label>
                       </div>
-                      <label
-                        htmlFor="continuous"
-                        className="text-sm font-medium text-gray-900 dark:text-white"
-                      >
-                        Enable 24/7 Recording
-                      </label>
+
+                      {continuousRecording && (
+                        <div className="mt-3 flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400">
+                          <HardDrive className="h-4 w-4 shrink-0 mt-0.5" />
+                          <p>
+                            <strong>Warning:</strong> This consumes significant
+                            storage space. Ensure your server has adequate
+                            capacity. Old footage will be deleted automatically
+                            based on your Retention Policy.
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     {/* Danger Zone */}

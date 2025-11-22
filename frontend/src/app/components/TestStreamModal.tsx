@@ -21,39 +21,29 @@ export default function TestStreamModal({
 
   useEffect(() => {
     if (isOpen && testStreamPath) {
-      // Create a temporary "Camera" object for the LiveCameraView component
       setTestCamera({
-        id: 9999, // Fake ID
+        id: 9999,
         name: "Test Stream",
         path: testStreamPath,
-        rtsp_url: "", // Not needed by the player
+        rtsp_url: "",
         display_order: 0,
         motion_type: "off",
         rtsp_substream_url: null,
         motion_roi: null,
         motion_sensitivity: 50,
         continuous_recording: false,
+        // --- FIX: Added missing field ---
+        ai_classes: "",
       });
     } else {
-      setTestCamera(null); // Clear camera when modal closes
+      setTestCamera(null);
     }
   }, [isOpen, testStreamPath]);
 
   return (
     <Transition appear show={isOpen} as={Fragment}>
       <Dialog as="div" className="relative z-50" onClose={onClose}>
-        <Transition.Child
-          as={Fragment}
-          enter="ease-out duration-300"
-          enterFrom="opacity-0"
-          enterTo="opacity-100"
-          leave="ease-in duration-200"
-          leaveFrom="opacity-100"
-          leaveTo="opacity-0"
-        >
-          <div className="fixed inset-0 bg-black/50" />
-        </Transition.Child>
-
+        {/* ... (Keep existing JSX for modal UI) ... */}
         <div className="fixed inset-0 overflow-y-auto">
           <div className="flex min-h-full items-center justify-center p-4 text-center">
             <Transition.Child
@@ -81,15 +71,13 @@ export default function TestStreamModal({
                 <div className="mt-4">
                   <p className="text-sm text-gray-500 dark:text-zinc-400 mb-4">
                     The video player below will attempt to connect to your
-                    stream. If you see a &quot;Connection Failed&quot; error,
-                    please check your RTSP URL and credentials.
+                    stream. If you see a "Connection Failed" error, please check
+                    your RTSP URL and credentials.
                   </p>
 
                   {/* Render the player only when the camera object is set */}
                   {testCamera && (
-                    <div className="relative aspect-video w-full rounded-lg bg-black overflow-hidden shadow-lg">
-                      <LiveCameraView camera={testCamera} isMuted={false} />
-                    </div>
+                    <LiveCameraView camera={testCamera} isMuted={false} />
                   )}
                 </div>
               </Dialog.Panel>

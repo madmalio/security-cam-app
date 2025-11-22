@@ -1,33 +1,33 @@
 "use client";
 
-import React, { Fragment, useState, useEffect, useCallback } from "react";
+import React, { Fragment, useState, useEffect } from "react";
 import { Dialog, Transition } from "@headlessui/react";
 import {
   X,
-  Calendar,
   Play,
   Film,
   Download,
   Loader,
-  Trash2,
   RefreshCw,
+  Trash2,
 } from "lucide-react";
 import { Camera } from "@/app/types";
 import { useAuth } from "@/app/contexts/AuthContext";
-import { format } from "date-fns";
 import { toast } from "sonner";
-import ConfirmModal from "./ConfirmModal"; // <-- UPDATED
+import ConfirmModal from "./ConfirmModal";
 
 interface Recording {
   filename: string;
   url: string;
-  time: string; // HHMMSS
+  time: string;
 }
 
 interface ContinuousPlaybackModalProps {
   isOpen: boolean;
   onClose: () => void;
   camera: Camera | null;
+  initialDate?: string | null; // <-- NEW
+  initialFile?: string | null; // <-- NEW
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
@@ -43,68 +43,71 @@ export default function ContinuousPlaybackModal({
   isOpen,
   onClose,
   camera,
+  initialDate,
+  initialFile,
 }: ContinuousPlaybackModalProps) {
   const { api } = useAuth();
   const [selectedDate, setSelectedDate] = useState(getTodayString());
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [currentVideo, setCurrentVideo] = useState<string | null>(null);
+
   const [isLoading, setIsLoading] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  // Delete state
   const [isDeleting, setIsDeleting] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [recordingToDelete, setRecordingToDelete] = useState<string | null>(
     null
   );
 
-  const fetchRecordings = useCallback(
-    async (showLoadingIndicator = true) => {
-      if (!camera || !isOpen) return;
+  // --- FIX: Sync date prop to state when modal opens ---
+  useEffect(() => {
+    if (isOpen && initialDate) {
+      setSelectedDate(initialDate);
+    } else if (isOpen && !initialDate) {
+      setSelectedDate(getTodayString());
+    }
+  }, [isOpen, initialDate]);
 
-      const startTime = Date.now();
+  // --- Fetch Recordings ---
+  useEffect(() => {
+    if (!camera || !isOpen) return;
 
-      if (showLoadingIndicator) setIsLoading(true);
-      else setIsRefreshing(true);
-
+    const fetchRecordings = async () => {
+      setIsLoading(true);
       try {
         const response = await api(
           `/api/cameras/${camera.id}/recordings?date_str=${selectedDate}`
         );
         if (!response || !response.ok) return;
         const data = await response.json();
-
-        const elapsedTime = Date.now() - startTime;
-        if (!showLoadingIndicator && elapsedTime < 700) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, 700 - elapsedTime)
-          );
-        }
-
         setRecordings(data);
+
+        // --- FIX: Auto-play if initialFile matches ---
+        if (initialFile) {
+          // The URL format from backend is "continuous/{camID}/{filename}"
+          const targetUrl = `continuous/${camera.id}/${initialFile}`;
+          // Verify it exists in the list (optional, but safer)
+          const exists = data.find(
+            (r: Recording) => r.filename === initialFile
+          );
+          if (exists) {
+            setCurrentVideo(targetUrl);
+          }
+        } else {
+          setCurrentVideo(null);
+        }
       } catch (error) {
         console.error(error);
       } finally {
         setIsLoading(false);
-        setIsRefreshing(false);
       }
-    },
-    [api, camera, isOpen, selectedDate]
-  );
+    };
 
-  useEffect(() => {
-    fetchRecordings(true);
-    setCurrentVideo(null);
-  }, [fetchRecordings]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const intervalId = setInterval(() => {
-      fetchRecordings(false);
-    }, 30000);
-
-    return () => clearInterval(intervalId);
-  }, [isOpen, fetchRecordings]);
+    fetchRecordings();
+  }, [api, camera, selectedDate, isOpen, initialFile]); // Added initialFile
 
   const formatTime = (timeStr: string) => {
     return `${timeStr.slice(0, 2)}:${timeStr.slice(2, 4)}:${timeStr.slice(
@@ -147,33 +150,19 @@ export default function ContinuousPlaybackModal({
   const handleDelete = async () => {
     if (!recordingToDelete || !camera) return;
     setIsDeleting(true);
-
     const filename = recordingToDelete.split("/").pop();
-
     try {
       const response = await api(
         `/api/cameras/${camera.id}/recordings/${filename}`,
-        {
-          method: "DELETE",
-        }
+        { method: "DELETE" }
       );
-
-      if (!response || !response.ok) {
-        throw new Error("Delete failed");
-      }
-
+      if (!response || !response.ok) throw new Error("Delete failed");
       toast.success("Recording deleted");
-
       setRecordings((prev) => prev.filter((r) => r.url !== recordingToDelete));
-
-      if (currentVideo === recordingToDelete) {
-        setCurrentVideo(null);
-      }
-
+      if (currentVideo === recordingToDelete) setCurrentVideo(null);
       setIsDeleteConfirmOpen(false);
       setRecordingToDelete(null);
     } catch (e) {
-      console.error(e);
       toast.error("Failed to delete recording");
     } finally {
       setIsDeleting(false);
@@ -218,19 +207,6 @@ export default function ContinuousPlaybackModal({
                       </p>
                     </div>
                     <div className="flex items-center gap-4">
-                      <button
-                        onClick={() => fetchRecordings(false)}
-                        disabled={isRefreshing || isLoading}
-                        className="rounded-full p-2 transition-all hover:bg-gray-100 dark:hover:bg-zinc-800"
-                        title="Refresh list"
-                      >
-                        <RefreshCw
-                          className={`h-5 w-5 text-gray-500 dark:text-zinc-400 ${
-                            isRefreshing ? "animate-spin" : ""
-                          }`}
-                        />
-                      </button>
-
                       <input
                         type="date"
                         value={selectedDate}
@@ -263,16 +239,13 @@ export default function ContinuousPlaybackModal({
                           </div>
                         )}
                       </div>
-
                       {currentVideo && (
                         <div className="bg-zinc-800 p-3 flex justify-end border-t border-zinc-700 gap-2">
                           <button
                             onClick={() => confirmDelete(currentVideo)}
                             className="flex items-center gap-2 rounded-md bg-red-600/20 px-3 py-1.5 text-sm font-medium text-red-500 hover:bg-red-600 hover:text-white transition-colors"
-                            title="Delete this clip"
                           >
-                            <Trash2 className="h-4 w-4" />
-                            Delete
+                            <Trash2 className="h-4 w-4" /> Delete
                           </button>
                           <button
                             onClick={handleDownload}
@@ -283,8 +256,8 @@ export default function ContinuousPlaybackModal({
                               <Loader className="h-4 w-4 animate-spin" />
                             ) : (
                               <Download className="h-4 w-4" />
-                            )}
-                            {isDownloading ? "Downloading..." : "Download Clip"}
+                            )}{" "}
+                            Download Clip
                           </button>
                         </div>
                       )}
@@ -295,14 +268,13 @@ export default function ContinuousPlaybackModal({
                         <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-gray-500">
                           Available Clips
                         </h3>
-
                         {isLoading ? (
                           <div className="flex justify-center py-4">
                             <Loader className="h-6 w-6 animate-spin text-zinc-500" />
                           </div>
                         ) : recordings.length === 0 ? (
                           <p className="text-sm text-gray-500">
-                            No recordings found for this date.
+                            No recordings found.
                           </p>
                         ) : (
                           <div className="space-y-2">
@@ -329,14 +301,12 @@ export default function ContinuousPlaybackModal({
                                     </span>
                                   </div>
                                 </button>
-
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     confirmDelete(rec.url);
                                   }}
                                   className="ml-2 rounded-full p-2 text-gray-400 hover:bg-red-100 hover:text-red-600 dark:text-zinc-500 dark:hover:bg-red-900/30 dark:hover:text-red-400"
-                                  title="Delete Recording"
                                 >
                                   <Trash2 className="h-4 w-4" />
                                 </button>
@@ -353,7 +323,6 @@ export default function ContinuousPlaybackModal({
           </div>
         </Dialog>
       </Transition>
-
       <ConfirmModal
         isOpen={isDeleteConfirmOpen}
         onClose={() => setIsDeleteConfirmOpen(false)}

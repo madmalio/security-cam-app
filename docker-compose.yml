@@ -99,6 +99,8 @@ services:
     depends_on:
       - backend
       - mediamtx
+    volumes:
+      - ./ai-detector:/app
     networks:
       - cam_net
 

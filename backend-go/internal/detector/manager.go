@@ -21,16 +21,11 @@ import (
 // Start kicks off the loops
 func (m *Manager) Start() {
 	// Ensure directories exist
-	os.MkdirAll("/var/log/motion", 0755)
-	os.MkdirAll("/app/motion_confs", 0755) 
 	os.MkdirAll("/recordings", 0755)
+	os.MkdirAll("/var/log/nvr", 0755)
 
 	log.Println("--- Detector Manager Started ---")
-
-	// Initial sync
 	m.SyncCameras()
-
-	// Start background loops
 	go m.StartJanitor()
 	go m.monitorLoop()
 }
@@ -42,7 +37,6 @@ func (m *Manager) monitorLoop() {
 	}
 }
 
-// SyncCameras ensures processes match desired state AND MediaMTX is configured
 func (m *Manager) SyncCameras() {
 	var cameras []models.Camera
 	if err := database.DB.Find(&cameras).Error; err != nil {
@@ -64,41 +58,23 @@ func (m *Manager) SyncCameras() {
 		} else {
 			if proc, exists := m.ContinuousProcs[cam.ID]; exists {
 				m.killProcess(proc.Process)
-				if proc.LogFile != nil {
-					proc.LogFile.Close()
-				}
+				if proc.LogFile != nil { proc.LogFile.Close() }
 				delete(m.ContinuousProcs, cam.ID)
 			}
 		}
 		
-		// 2. Handle Motion Detection
-		if cam.MotionType == "active" {
-			if _, exists := m.MotionProcs[cam.ID]; !exists {
-				m.spawnMotion(cam)
-			}
-		} else {
-			if cmd, exists := m.MotionProcs[cam.ID]; exists {
-				m.killProcess(cmd)
-				delete(m.MotionProcs, cam.ID)
-			}
-		}
+		// NOTE: "Active" Motion Detection is now handled purely by external AI (webhook)
+		// We no longer spawn 'motion' daemon processes here.
 	}
 }
 
-// registerMediaMTX talks to the MediaMTX API to configure the stream path
 func (m *Manager) registerMediaMTX(cam models.Camera) {
-	if cam.RTSPUrl == "" {
-		return
-	}
+	if cam.RTSPUrl == "" { return }
 
-	// --- FIX: CACHE CHECK ---
-	// If we already registered this camera with this exact URL, skip the API call.
-	// This stops the log spam and high CPU usage.
 	if lastURL, ok := m.RegisteredPaths[cam.ID]; ok && lastURL == cam.RTSPUrl {
 		return
 	}
 
-	// Payload for MediaMTX: sourceOnDemand=false for INSTANT loading
 	payload := map[string]interface{}{
 		"source":         cam.RTSPUrl,
 		"sourceOnDemand": false, 
@@ -120,7 +96,6 @@ func (m *Manager) registerMediaMTX(cam models.Camera) {
 	}
 	defer resp.Body.Close()
 
-	// If 404, it means path doesn't exist, so we create it with POST
 	if resp.StatusCode == 404 {
 		postUrl := fmt.Sprintf("http://mediamtx:9997/v3/config/paths/add/%s", cam.Path)
 		reqPost, _ := http.NewRequest("POST", postUrl, bytes.NewBuffer(jsonData))
@@ -132,77 +107,12 @@ func (m *Manager) registerMediaMTX(cam models.Camera) {
 			defer respPost.Body.Close()
 		}
 	}
-
-	// --- FIX: Update Cache on success ---
 	m.RegisteredPaths[cam.ID] = cam.RTSPUrl
 	log.Printf("[%s] Registered with MediaMTX (Cached)", cam.Name)
 }
 
-func (m *Manager) spawnMotion(cam models.Camera) {
-	log.Printf("[%s] Starting Motion Detection...\n", cam.Name)
-
-	confPath := filepath.Join("/app/motion_confs", fmt.Sprintf("cam_%d.conf", cam.ID))
-	
-	// --- FIX: Generate Mask File ---
-	maskPath := filepath.Join("/app/motion_confs", fmt.Sprintf("cam_%d_mask.pgm", cam.ID))
-	generateMaskFile(cam.MotionROI, maskPath)
-	// -------------------------------
-
-	streamUrl := cam.RTSPUrl
-	if cam.RTSPSubstreamUrl != "" {
-		streamUrl = cam.RTSPSubstreamUrl
-	}
-
-	threshold := 5000 - (cam.MotionSensitivity * 47) 
-	if threshold < 300 { threshold = 300 }
-
-	// --- FIX: Add mask_file line to config ---
-	configContent := fmt.Sprintf(`
-daemon off
-setup_mode off
-log_level 6
-log_type file
-log_file /var/log/motion/motion_%d.log
-
-netcam_url %s
-rtsp_transport tcp
-
-on_event_start curl -X POST http://localhost:8080/api/webhook/motion/start/%d
-on_event_end curl -X POST http://localhost:8080/api/webhook/motion/end/%d
-
-mask_file %s
-
-threshold %d
-despeckle Eedl
-minimum_motion_frames 1
-event_gap 30
-pre_capture 0
-post_capture 0
-
-output_pictures off
-output_debug_pictures off
-ffmpeg_output_movies off
-`, cam.ID, streamUrl, cam.ID, cam.ID, maskPath, threshold)
-
-	if err := os.WriteFile(confPath, []byte(configContent), 0644); err != nil {
-		log.Printf("Error writing motion conf: %v\n", err)
-		return
-	}
-
-	cmd := exec.Command("motion", "-c", confPath)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	if err := cmd.Start(); err != nil {
-		log.Printf("[%s] Failed to start motion: %v\n", cam.Name, err)
-		return
-	}
-
-	m.MotionProcs[cam.ID] = cmd
-}
-
 func (m *Manager) spawnContinuous(cam models.Camera) {
 	log.Printf("[%s] Starting 24/7 Recording...\n", cam.Name)
-	
 	outDir := filepath.Join("/recordings", "continuous", strconv.Itoa(int(cam.ID)))
 	os.MkdirAll(outDir, 0755)
 	outPattern := filepath.Join(outDir, "%Y%m%d-%H%M%S.mp4")
@@ -219,33 +129,21 @@ func (m *Manager) spawnContinuous(cam models.Camera) {
 		outPattern,
 	)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	logFile, _ := os.Create(fmt.Sprintf("/var/log/motion/continuous_%d.log", cam.ID))
+	logFile, _ := os.Create(fmt.Sprintf("/var/log/nvr/continuous_%d.log", cam.ID))
 	cmd.Stderr = logFile
 
-	if err := cmd.Start(); err != nil {
-		log.Printf("[%s] Failed to start continuous: %v\n", cam.Name, err)
-		return
-	}
-
-	m.ContinuousProcs[cam.ID] = &ContinuousProcess{
-		Process: cmd,
-		LogFile: logFile,
-	}
+	if err := cmd.Start(); err != nil { return }
+	m.ContinuousProcs[cam.ID] = &ContinuousProcess{Process: cmd, LogFile: logFile}
 }
 
 func (m *Manager) StartEventRecord(camID uint) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, exists := m.ActiveRecordings[camID]; exists {
-		return nil
-	}
+	if _, exists := m.ActiveRecordings[camID]; exists { return nil }
 
 	var cam models.Camera
-	if err := database.DB.First(&cam, camID).Error; err != nil {
-		return err
-	}
+	if err := database.DB.First(&cam, camID).Error; err != nil { return err }
 
 	now := time.Now()
 	filename := fmt.Sprintf("event_%d_%s.mp4", camID, now.Format("20060102-150405"))
@@ -272,9 +170,7 @@ func (m *Manager) StartEventRecord(camID uint) error {
 	)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	
-	if err := cmd.Start(); err != nil {
-		return err
-	}
+	if err := cmd.Start(); err != nil { return err }
 
 	m.ActiveRecordings[camID] = &ActiveRecording{
 		Process:   cmd,
@@ -289,24 +185,76 @@ func (m *Manager) StartEventRecord(camID uint) error {
 
 func (m *Manager) StopEventRecord(camID uint) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	rec, exists := m.ActiveRecordings[camID]
 	if !exists {
+		m.mu.Unlock()
 		return nil
 	}
 
-	m.killProcess(rec.Process)
+	duration := time.Since(rec.StartTime)
+	if duration < 5*time.Second {
+		m.mu.Unlock()
+		go func(id uint, delay time.Duration) {
+			time.Sleep(delay)
+			m.delayedStop(id)
+		}(camID, 5*time.Second - duration)
+		return nil
+	}
 
-	var event models.Event
-	if err := database.DB.First(&event, rec.EventID).Error; err == nil {
-		event.EndTime = time.Now()
-		go m.generateThumbnail(rec.VideoPath, event.ID)
-		database.DB.Save(&event)
+	if rec.Process.Process != nil {
+		rec.Process.Process.Signal(syscall.SIGTERM)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- rec.Process.Wait() }()
+
+	m.mu.Unlock()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		if rec.Process.Process != nil {
+			rec.Process.Process.Kill()
+		}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Validate File
+	info, err := os.Stat(rec.VideoPath)
+	isValid := false
+	if err == nil && info.Size() > 50000 { 
+		isValid = true
+	}
+
+	if !isValid {
+		log.Printf("Event %d discarded (too small).", rec.EventID)
+		os.Remove(rec.VideoPath)
+		database.DB.Delete(&models.Event{}, rec.EventID)
+	} else {
+		var event models.Event
+		if err := database.DB.First(&event, rec.EventID).Error; err == nil {
+			event.EndTime = time.Now()
+			go m.generateThumbnail(rec.VideoPath, event.ID)
+			database.DB.Save(&event)
+		}
 	}
 
 	delete(m.ActiveRecordings, camID)
 	return nil
+}
+
+func (m *Manager) delayedStop(camID uint) {
+	m.mu.Lock()
+	_, exists := m.ActiveRecordings[camID]
+	if !exists {
+		m.mu.Unlock()
+		return
+	}
+	m.mu.Unlock() 
+	m.StopEventRecord(camID)
 }
 
 func (m *Manager) killProcess(cmd *exec.Cmd) {
@@ -316,6 +264,7 @@ func (m *Manager) killProcess(cmd *exec.Cmd) {
 }
 
 func (m *Manager) generateThumbnail(videoPath string, eventID uint) {
+	time.Sleep(500 * time.Millisecond)
 	thumbPath := strings.Replace(videoPath, ".mp4", ".jpg", 1)
 	cmd := exec.Command("ffmpeg", 
 		"-i", videoPath, 

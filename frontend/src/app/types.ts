@@ -11,6 +11,7 @@ export interface Camera {
   motion_roi: string | null;
   motion_sensitivity: number;
   continuous_recording: boolean;
+  ai_classes: string;
 }
 
 export interface User {

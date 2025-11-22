@@ -15,7 +15,8 @@ import {
   Loader,
   Wifi,
   Activity,
-  AlertTriangle, // <-- Import Icon
+  AlertTriangle,
+  HardDrive, // <-- Added Icon
 } from "lucide-react";
 import { toast } from "sonner";
 import ConfirmModal from "./ConfirmModal";
@@ -216,38 +217,57 @@ export default function CameraEditRow({
               className="w-full rounded-md border border-gray-300 p-2 text-sm dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
             />
           </div>
-          <div className="flex items-center">
-            <label className="flex items-center gap-2 cursor-pointer">
+
+          {/* --- 24/7 Recording Toggle with Warning --- */}
+          <div
+            className={`col-span-1 md:col-span-2 rounded-lg border p-3 transition-colors ${
+              continuousRecording
+                ? "border-amber-200 bg-amber-50 dark:border-amber-900/30 dark:bg-amber-900/10"
+                : "border-gray-200 dark:border-zinc-700"
+            }`}
+          >
+            <div className="flex items-center gap-2">
               <input
+                id={`continuous-${camera.id}`}
                 type="checkbox"
                 checked={continuousRecording}
                 onChange={(e) => setContinuousRecording(e.target.checked)}
-                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700"
+                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700"
               />
-              <span className="text-sm font-medium text-gray-700 dark:text-zinc-300">
+              <label
+                htmlFor={`continuous-${camera.id}`}
+                className="text-sm font-medium text-gray-900 dark:text-white cursor-pointer"
+              >
                 Enable 24/7 Recording
-              </span>
-            </label>
+              </label>
+            </div>
+
+            {continuousRecording && (
+              <div className="mt-2 flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400">
+                <HardDrive className="h-3 w-3 shrink-0 mt-0.5" />
+                <p>
+                  <strong>Warning:</strong> Consumes significant storage. Old
+                  footage is deleted automatically based on Retention Policy.
+                </p>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Danger Zone */}
+        {/* Danger Zone (Wipe) */}
         <div className="mt-2 pt-4 border-t border-gray-200 dark:border-zinc-700">
-          <h4 className="text-xs font-bold text-red-600 uppercase tracking-wider mb-3">
-            Danger Zone
-          </h4>
           <button
             type="button"
             onClick={() => setIsConfirmWipeOpen(true)}
             disabled={isWiping}
-            className="flex w-full items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-100 dark:border-red-900/30 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30"
+            className="flex items-center gap-2 text-xs font-medium text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
           >
             {isWiping ? (
-              <Loader className="h-4 w-4 animate-spin" />
+              <Loader className="h-3 w-3 animate-spin" />
             ) : (
-              <Trash2 className="h-4 w-4" />
+              <Trash2 className="h-3 w-3" />
             )}
-            Delete All Recordings
+            Delete Recordings
           </button>
         </div>
 
@@ -353,14 +373,13 @@ export default function CameraEditRow({
           <button
             onClick={() => setIsConfirmOpen(true)}
             className="rounded p-2 text-gray-500 hover:bg-red-50 hover:text-red-600 dark:text-zinc-400 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-            title="Delete Camera"
+            title="Delete"
           >
             <Trash2 className="h-4 w-4" />
           </button>
         </div>
       </div>
 
-      {/* Delete Camera Confirmation */}
       <ConfirmModal
         isOpen={isConfirmOpen}
         onClose={() => setIsConfirmOpen(false)}

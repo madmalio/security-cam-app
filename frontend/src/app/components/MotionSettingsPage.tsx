@@ -1,22 +1,32 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { Camera, MotionType } from "@/app/types";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { toast } from "sonner";
 import {
-  RadioTower,
-  Webhook,
   ToggleLeft,
   Loader,
   Copy,
   Check,
   Cpu,
+  User,
+  Car,
+  Dog,
 } from "lucide-react";
 import LiveCameraView from "./LiveCameraView";
-import MotionGrid from "./MotionGrid";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+
+const OBJECT_CLASSES = [
+  { id: 0, label: "Person", icon: User },
+  { id: 2, label: "Car", icon: Car },
+  { id: 3, label: "Motorcycle", icon: Car },
+  { id: 5, label: "Bus", icon: Car },
+  { id: 7, label: "Truck", icon: Car },
+  { id: 15, label: "Cat", icon: Dog },
+  { id: 16, label: "Dog", icon: Dog },
+];
 
 interface MotionSettingsPageProps {
   cameras: Camera[];
@@ -40,16 +50,25 @@ export default function MotionSettingsPage({
   );
 
   const [motionType, setMotionType] = useState<MotionType>("off");
-  const [motionRoi, setMotionRoi] = useState("");
   const [rtspSubstreamUrl, setRtspSubstreamUrl] = useState("");
-  const [sensitivity, setSensitivity] = useState(50);
+  const [selectedClasses, setSelectedClasses] = useState<Set<number>>(
+    new Set([0])
+  );
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (selectedCamera) {
       setMotionType(selectedCamera.motion_type);
-      setMotionRoi(selectedCamera.motion_roi || "");
       setRtspSubstreamUrl(selectedCamera.rtsp_substream_url || "");
-      setSensitivity(selectedCamera.motion_sensitivity || 50);
+
+      if (selectedCamera.ai_classes) {
+        const ids = selectedCamera.ai_classes
+          .split(",")
+          .map(Number)
+          .filter((n) => !isNaN(n));
+        setSelectedClasses(new Set(ids));
+      } else {
+        setSelectedClasses(new Set([0]));
+      }
     }
   }, [selectedCamera]);
 
@@ -62,9 +81,8 @@ export default function MotionSettingsPage({
         method: "PATCH",
         body: JSON.stringify({
           motion_type: motionType,
-          motion_roi: motionRoi,
           rtsp_substream_url: rtspSubstreamUrl || null,
-          motion_sensitivity: sensitivity,
+          ai_classes: Array.from(selectedClasses).join(","),
         }),
       });
       if (!response) return;
@@ -74,13 +92,20 @@ export default function MotionSettingsPage({
         throw new Error(err.detail || "Failed to save settings");
       }
 
-      toast.success("Motion settings saved!");
+      toast.success("Settings saved!");
       onCamerasUpdate();
     } catch (err: any) {
       toast.error(err.message);
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const toggleClass = (id: number) => {
+    const newSet = new Set(selectedClasses);
+    if (newSet.has(id)) newSet.delete(id);
+    else newSet.add(id);
+    setSelectedClasses(newSet);
   };
 
   const webhookUrl = selectedCamera
@@ -90,7 +115,7 @@ export default function MotionSettingsPage({
   const handleCopy = () => {
     navigator.clipboard.writeText(webhookUrl);
     setIsCopied(true);
-    toast.success("Webhook URL copied!");
+    toast.success("Copied!");
     setTimeout(() => setIsCopied(false), 2000);
   };
 
@@ -98,10 +123,10 @@ export default function MotionSettingsPage({
     <div className="space-y-8 max-w-4xl pb-16">
       <div className="mb-8">
         <h1 className="text-3xl font-semibold text-gray-900 dark:text-white">
-          Motion Detection
+          Smart Detection
         </h1>
         <p className="mt-1 text-gray-500 dark:text-zinc-400">
-          Configure how your system detects events.
+          Configure AI object detection.
         </p>
       </div>
 
@@ -131,29 +156,21 @@ export default function MotionSettingsPage({
           <div className="space-y-6">
             <div>
               <label className="text-lg font-medium text-gray-900 dark:text-white">
-                Detection Mode
+                Detection Status
               </label>
-              <div className="mt-2 flex flex-col sm:flex-row gap-2">
+              <div className="mt-2 flex flex-col sm:flex-row gap-4">
                 <MotionRadioCard
                   label="Off"
-                  desc="No event recording."
+                  desc="No recording."
                   icon={ToggleLeft}
                   value="off"
                   currentType={motionType}
                   onChange={setMotionType}
                 />
                 <MotionRadioCard
-                  label="Pixel Motion"
-                  desc="Internal grid detection."
-                  icon={RadioTower}
-                  value="active"
-                  currentType={motionType}
-                  onChange={setMotionType}
-                />
-                <MotionRadioCard
-                  label="AI / Webhook"
-                  desc="Use AI Object Detection."
-                  icon={Cpu} // Updated Icon
+                  label="AI Enabled"
+                  desc="Record when objects are detected."
+                  icon={Cpu}
                   value="webhook"
                   currentType={motionType}
                   onChange={setMotionType}
@@ -161,102 +178,78 @@ export default function MotionSettingsPage({
               </div>
             </div>
 
-            {/* --- Sensitivity (Active Only) --- */}
-            {motionType === "active" && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-zinc-300 mb-2">
-                  Sensitivity: {sensitivity}%
-                </label>
-                <input
-                  type="range"
-                  min="1"
-                  max="100"
-                  value={sensitivity}
-                  onChange={(e) => setSensitivity(Number(e.target.value))}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
-                />
-              </div>
-            )}
-
-            {/* --- Substream Input (Active OR Webhook) --- */}
-            {(motionType === "active" || motionType === "webhook") && (
-              <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-100 dark:border-blue-800">
-                <label
-                  htmlFor="substream-url"
-                  className="block text-sm font-medium text-blue-900 dark:text-blue-200"
-                >
-                  Substream URL (Recommended for AI/Performance)
-                </label>
-                <p className="text-xs text-blue-700 dark:text-blue-300 mb-2">
-                  Using a lower resolution stream (e.g. 640x480) drastically
-                  reduces CPU usage for detection.
-                </p>
-                <input
-                  type="text"
-                  id="substream-url"
-                  value={rtspSubstreamUrl}
-                  onChange={(e) => setRtspSubstreamUrl(e.target.value)}
-                  placeholder="rtsp://.../substream"
-                  className="w-full rounded-md border border-blue-200 p-2 text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
-                />
-              </div>
-            )}
-
-            {/* --- Webhook Info --- */}
+            {/* --- AI Configuration --- */}
             {motionType === "webhook" && (
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-zinc-300">
-                  Internal Webhook URL
-                </label>
-                <div className="flex gap-2">
+              <div className="space-y-6 animate-in fade-in duration-300">
+                {/* Object Filter */}
+                <div className="bg-indigo-50 dark:bg-indigo-900/20 p-4 rounded-lg border border-indigo-100 dark:border-indigo-800">
+                  <label className="block text-sm font-medium text-indigo-900 dark:text-indigo-200 mb-3">
+                    Objects to Detect
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {OBJECT_CLASSES.map((obj) => (
+                      <button
+                        key={obj.id}
+                        onClick={() => toggleClass(obj.id)}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+                          selectedClasses.has(obj.id)
+                            ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                            : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-600"
+                        }`}
+                      >
+                        <obj.icon className="h-3 w-3" />
+                        {obj.label}
+                        {selectedClasses.has(obj.id) && (
+                          <Check className="h-3 w-3 ml-1" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Substream URL */}
+                <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-100 dark:border-blue-800">
+                  <label className="block text-sm font-medium text-blue-900 dark:text-blue-200">
+                    Substream URL (Required for AI Efficiency)
+                  </label>
                   <input
                     type="text"
-                    value={webhookUrl}
-                    readOnly
-                    className="w-full flex-1 rounded-md border border-gray-300 bg-gray-50 p-2 text-gray-600 focus:outline-none dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-300"
+                    value={rtspSubstreamUrl}
+                    onChange={(e) => setRtspSubstreamUrl(e.target.value)}
+                    placeholder="rtsp://.../substream"
+                    className="mt-1 w-full rounded-md border border-blue-200 p-2 text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
                   />
-                  <button
-                    type="button"
-                    onClick={handleCopy}
-                    className={`flex w-12 items-center justify-center rounded-lg ${
-                      isCopied
-                        ? "bg-green-600 text-white"
-                        : "bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-zinc-600 dark:text-zinc-200 dark:hover:bg-zinc-500"
-                    }`}
-                    title="Copy"
-                  >
-                    {isCopied ? (
-                      <Check className="h-5 w-5" />
-                    ) : (
-                      <Copy className="h-5 w-5" />
-                    )}
-                  </button>
                 </div>
-                <p className="mt-2 text-xs text-gray-500">
-                  The built-in AI detector uses this automatically. You only
-                  need this if connecting external tools (like Blue Iris or
-                  HomeAssistant).
-                </p>
+
+                {/* Webhook Info (Advanced) */}
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-zinc-400">
+                    Integration URL (For external triggers)
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={webhookUrl}
+                      readOnly
+                      className="w-full flex-1 rounded-md border border-gray-200 bg-gray-50 p-1.5 text-xs text-gray-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCopy}
+                      className="p-1.5 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"
+                      title="Copy"
+                    >
+                      {isCopied ? (
+                        <Check className="h-4 w-4" />
+                      ) : (
+                        <Copy className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
           </div>
-
-          {/* --- Motion Grid (Active Only) --- */}
-          {motionType === "active" && (
-            <div className="space-y-4">
-              <label className="text-lg font-medium text-gray-900 dark:text-white">
-                Motion Grid
-              </label>
-              <div className="relative aspect-video w-full rounded-lg bg-black shadow-lg">
-                <LiveCameraView camera={selectedCamera} isMuted={true} />
-                <MotionGrid
-                  roi={motionRoi}
-                  onChange={setMotionRoi}
-                  disabled={false}
-                />
-              </div>
-            </div>
-          )}
 
           <div className="flex justify-end pt-4 border-t dark:border-zinc-700">
             <button

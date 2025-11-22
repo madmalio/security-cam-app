@@ -1,9 +1,9 @@
 package main
 
 import (
-	"bytes"    
+	"bytes"
 	"context"
-	"encoding/json"  
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -571,6 +571,15 @@ func getEvents(c echo.Context) error {
 	if cid := c.QueryParam("camera_id"); cid != "" {
 		tx = tx.Where("camera_id = ?", cid)
 	}
+
+	// --- FIX: Add Date Filtering Logic Here ---
+	if start := c.QueryParam("start_ts"); start != "" {
+		tx = tx.Where("start_time >= ?", start)
+	}
+	if end := c.QueryParam("end_ts"); end != "" {
+		tx = tx.Where("start_time <= ?", end)
+	}
+	// -----------------------------------------
 	
 	tx.Order("start_time desc").Limit(100).Find(&events)
 	return c.JSON(http.StatusOK, events)
@@ -642,7 +651,7 @@ func getContinuousRecordings(c echo.Context) error {
 		Url      string `json:"url"`
 		Time     string `json:"time"`
 	}
-	var results []RecFile
+	results := make([]RecFile, 0)
 	
 	dir := filepath.Join("/recordings", "continuous", id)
 	files, _ := os.ReadDir(dir)
@@ -663,7 +672,42 @@ func getContinuousRecordings(c echo.Context) error {
 }
 
 func getContinuousTimeline(c echo.Context) error {
-	return c.JSON(http.StatusOK, []map[string]string{})
+	id := c.Param("id")
+	dateStr := c.QueryParam("date_str") // YYYY-MM-DD
+	cleanDate := strings.ReplaceAll(dateStr, "-", "")
+
+	type RecordingSegment struct {
+		StartTime string `json:"start_time"`
+		EndTime   string `json:"end_time"`
+		Filename  string `json:"filename"`
+	}
+	segments := make([]RecordingSegment, 0)
+
+	dir := filepath.Join("/recordings", "continuous", id)
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return c.JSON(http.StatusOK, segments)
+	}
+
+	for _, f := range files {
+		if !f.IsDir() && strings.HasPrefix(f.Name(), cleanDate) && strings.HasSuffix(f.Name(), ".mp4") {
+			nameWithoutExt := strings.TrimSuffix(f.Name(), ".mp4")
+			
+			// --- FIX: Parse in LOCAL time (container TZ), not UTC ---
+			t, err := time.ParseInLocation("20060102-150405", nameWithoutExt, time.Local)
+			if err == nil {
+				endTime := t.Add(15 * time.Minute)
+				
+				segments = append(segments, RecordingSegment{
+					StartTime: t.Format(time.RFC3339), // Returns ISO string with correct offset
+					EndTime:   endTime.Format(time.RFC3339),
+					Filename:  f.Name(),
+				})
+			}
+		}
+	}
+	
+	return c.JSON(http.StatusOK, segments)
 }
 
 func deleteContinuousFile(c echo.Context) error {
@@ -675,7 +719,6 @@ func deleteContinuousFile(c echo.Context) error {
 }
 
 func getSystemHealth(c echo.Context) error {
-	// 1. Get Disk Usage
 	var stat syscall.Statfs_t
 	syscall.Statfs("/recordings", &stat)
 	
