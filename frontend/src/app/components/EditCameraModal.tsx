@@ -9,11 +9,13 @@ import {
   Trash2,
   AlertTriangle,
   HardDrive,
+  Wifi,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, Transition } from "@headlessui/react";
 import { useAuth } from "@/app/contexts/AuthContext";
 import ConfirmModal from "./ConfirmModal";
+import TestStreamModal from "./TestStreamModal";
 
 interface EditCameraModalProps {
   isOpen: boolean;
@@ -33,12 +35,16 @@ export default function EditCameraModal({
   const [rtspUrl, setRtspUrl] = useState("");
   const [substreamUrl, setSubstreamUrl] = useState("");
   const [continuousRecording, setContinuousRecording] = useState(false);
-  // Keep track of other fields to prevent overwriting with defaults if backend isn't perfect
   const [aiClasses, setAiClasses] = useState("");
 
   const [isLoading, setIsLoading] = useState(false);
   const [isWiping, setIsWiping] = useState(false);
   const [isConfirmWipeOpen, setIsConfirmWipeOpen] = useState(false);
+
+  // Test Logic
+  const [isTesting, setIsTesting] = useState(false);
+  const [testStreamPath, setTestStreamPath] = useState<string | null>(null);
+  const [isTestModalOpen, setIsTestModalOpen] = useState(false);
 
   useEffect(() => {
     if (camera && isOpen) {
@@ -49,6 +55,29 @@ export default function EditCameraModal({
       setAiClasses(camera.ai_classes || "");
     }
   }, [camera, isOpen]);
+
+  const handleTest = async (urlToTest: string) => {
+    if (!urlToTest) {
+      toast.error("Please enter a URL to test");
+      return;
+    }
+    setIsTesting(true);
+    try {
+      const response = await api("/api/cameras/test-connection", {
+        method: "POST",
+        body: JSON.stringify({ rtsp_url: urlToTest }),
+      });
+      if (!response || !response.ok) throw new Error("Test failed");
+
+      const data = await response.json();
+      setTestStreamPath(data.path);
+      setIsTestModalOpen(true);
+    } catch (err: any) {
+      toast.error("Connection failed: Check URL");
+    } finally {
+      setIsTesting(false);
+    }
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -63,13 +92,11 @@ export default function EditCameraModal({
           rtsp_url: rtspUrl,
           rtsp_substream_url: substreamUrl || null,
           continuous_recording: continuousRecording,
-          ai_classes: aiClasses, // Preserve existing classes
+          ai_classes: aiClasses,
         }),
       });
 
-      if (!response || !response.ok) {
-        throw new Error("Failed to update camera");
-      }
+      if (!response || !response.ok) throw new Error("Failed to update");
 
       toast.success("Camera updated successfully");
       onCameraUpdated();
@@ -85,16 +112,12 @@ export default function EditCameraModal({
     if (!camera) return;
     setIsWiping(true);
     setIsConfirmWipeOpen(false);
-
     try {
       const response = await api(`/api/cameras/${camera.id}/recordings`, {
         method: "DELETE",
       });
-
-      if (!response || !response.ok) {
+      if (!response || !response.ok)
         throw new Error("Failed to wipe recordings");
-      }
-
       toast.success(`All recordings for ${camera.name} have been deleted.`);
     } catch (err: any) {
       toast.error(err.message);
@@ -134,7 +157,7 @@ export default function EditCameraModal({
                   <div className="flex items-center justify-between mb-4">
                     <Dialog.Title
                       as="h3"
-                      className="text-lg font-medium leading-6 text-gray-900 dark:text-white"
+                      className="text-lg font-medium text-gray-900 dark:text-white"
                     >
                       Edit Camera
                     </Dialog.Title>
@@ -164,13 +187,28 @@ export default function EditCameraModal({
                       <label className="block text-sm font-medium text-gray-700 dark:text-zinc-300 mb-1">
                         Main RTSP URL
                       </label>
-                      <input
-                        type="text"
-                        value={rtspUrl}
-                        onChange={(e) => setRtspUrl(e.target.value)}
-                        required
-                        className="w-full rounded-md border border-gray-300 p-2.5 text-sm dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
-                      />
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={rtspUrl}
+                          onChange={(e) => setRtspUrl(e.target.value)}
+                          required
+                          className="w-full rounded-md border border-gray-300 p-2.5 text-sm dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleTest(rtspUrl)}
+                          disabled={isTesting}
+                          className="rounded-md bg-gray-100 p-2.5 text-gray-600 hover:bg-gray-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
+                          title="Test Main Stream"
+                        >
+                          {isTesting ? (
+                            <Loader className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Wifi className="h-4 w-4" />
+                          )}
+                        </button>
+                      </div>
                     </div>
 
                     <div>
@@ -180,16 +218,31 @@ export default function EditCameraModal({
                           (Optional)
                         </span>
                       </label>
-                      <input
-                        type="text"
-                        value={substreamUrl}
-                        onChange={(e) => setSubstreamUrl(e.target.value)}
-                        placeholder="For motion detection"
-                        className="w-full rounded-md border border-gray-300 p-2.5 text-sm dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
-                      />
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={substreamUrl}
+                          onChange={(e) => setSubstreamUrl(e.target.value)}
+                          placeholder="Low res for detection"
+                          className="w-full rounded-md border border-gray-300 p-2.5 text-sm dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleTest(substreamUrl)}
+                          disabled={isTesting || !substreamUrl}
+                          className="rounded-md bg-gray-100 p-2.5 text-gray-600 hover:bg-gray-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600 disabled:opacity-50"
+                          title="Test Substream"
+                        >
+                          {isTesting ? (
+                            <Loader className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Wifi className="h-4 w-4" />
+                          )}
+                        </button>
+                      </div>
                     </div>
 
-                    {/* 24/7 Recording Toggle with Warning */}
+                    {/* 24/7 Toggle */}
                     <div
                       className={`rounded-lg border p-4 transition-colors ${
                         continuousRecording
@@ -198,17 +251,15 @@ export default function EditCameraModal({
                       }`}
                     >
                       <div className="flex items-center gap-3">
-                        <div className="flex h-5 items-center">
-                          <input
-                            id="continuous"
-                            type="checkbox"
-                            checked={continuousRecording}
-                            onChange={(e) =>
-                              setContinuousRecording(e.target.checked)
-                            }
-                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700"
-                          />
-                        </div>
+                        <input
+                          id="continuous"
+                          type="checkbox"
+                          checked={continuousRecording}
+                          onChange={(e) =>
+                            setContinuousRecording(e.target.checked)
+                          }
+                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-700"
+                        />
                         <label
                           htmlFor="continuous"
                           className="text-sm font-medium text-gray-900 dark:text-white"
@@ -216,15 +267,13 @@ export default function EditCameraModal({
                           Enable 24/7 Recording
                         </label>
                       </div>
-
                       {continuousRecording && (
                         <div className="mt-3 flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400">
                           <HardDrive className="h-4 w-4 shrink-0 mt-0.5" />
                           <p>
-                            <strong>Warning:</strong> This consumes significant
-                            storage space. Ensure your server has adequate
-                            capacity. Old footage will be deleted automatically
-                            based on your Retention Policy.
+                            <strong>Warning:</strong> Consumes significant
+                            storage. Old footage will be deleted based on
+                            Retention Policy.
                           </p>
                         </div>
                       )}
@@ -245,7 +294,7 @@ export default function EditCameraModal({
                           <Loader className="h-4 w-4 animate-spin" />
                         ) : (
                           <Trash2 className="h-4 w-4" />
-                        )}
+                        )}{" "}
                         Delete All Recordings
                       </button>
                     </div>
@@ -267,7 +316,7 @@ export default function EditCameraModal({
                           <Loader className="h-4 w-4 animate-spin" />
                         ) : (
                           <Save className="h-4 w-4" />
-                        )}
+                        )}{" "}
                         Save Changes
                       </button>
                     </div>
@@ -279,7 +328,12 @@ export default function EditCameraModal({
         </Dialog>
       </Transition>
 
-      {/* Wipe Confirmation Modal */}
+      <TestStreamModal
+        isOpen={isTestModalOpen}
+        onClose={() => setIsTestModalOpen(false)}
+        testStreamPath={testStreamPath}
+      />
+
       <ConfirmModal
         isOpen={isConfirmWipeOpen}
         onClose={() => setIsConfirmWipeOpen(false)}
@@ -297,9 +351,9 @@ export default function EditCameraModal({
               ?
             </p>
             <p className="text-sm text-red-600 dark:text-red-400">
-              <AlertTriangle className="inline h-4 w-4 mr-1 -mt-0.5" />
-              This will remove all 24/7 history and motion events. This cannot
-              be undone.
+              <AlertTriangle className="inline h-4 w-4 mr-1 -mt-0.5" /> This
+              will remove all 24/7 history and motion events. This cannot be
+              undone.
             </p>
           </div>
         }

@@ -13,8 +13,9 @@ import {
   User,
   Car,
   Dog,
+  Wifi, // <-- Added Icon
 } from "lucide-react";
-import LiveCameraView from "./LiveCameraView";
+import TestStreamModal from "./TestStreamModal"; // <-- Added Import
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
@@ -43,6 +44,11 @@ export default function MotionSettingsPage({
   );
   const [isSaving, setIsSaving] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
+
+  // Test Logic
+  const [isTesting, setIsTesting] = useState(false);
+  const [testStreamPath, setTestStreamPath] = useState<string | null>(null);
+  const [isTestModalOpen, setIsTestModalOpen] = useState(false);
 
   const selectedCamera = useMemo(
     () => cameras.find((c) => c.id === selectedCameraId),
@@ -85,12 +91,8 @@ export default function MotionSettingsPage({
           ai_classes: Array.from(selectedClasses).join(","),
         }),
       });
-      if (!response) return;
 
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.detail || "Failed to save settings");
-      }
+      if (!response || !response.ok) throw new Error("Failed to save settings");
 
       toast.success("Settings saved!");
       onCamerasUpdate();
@@ -98,6 +100,26 @@ export default function MotionSettingsPage({
       toast.error(err.message);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleTest = async (url: string) => {
+    if (!url) return;
+    setIsTesting(true);
+    try {
+      const response = await api("/api/cameras/test-connection", {
+        method: "POST",
+        body: JSON.stringify({ rtsp_url: url }),
+      });
+      if (!response || !response.ok) throw new Error("Test failed");
+
+      const data = await response.json();
+      setTestStreamPath(data.path);
+      setIsTestModalOpen(true);
+    } catch (err: any) {
+      toast.error("Connection failed");
+    } finally {
+      setIsTesting(false);
     }
   };
 
@@ -207,18 +229,33 @@ export default function MotionSettingsPage({
                   </div>
                 </div>
 
-                {/* Substream URL */}
+                {/* Substream URL with Test Button */}
                 <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-100 dark:border-blue-800">
                   <label className="block text-sm font-medium text-blue-900 dark:text-blue-200">
                     Substream URL (Required for AI Efficiency)
                   </label>
-                  <input
-                    type="text"
-                    value={rtspSubstreamUrl}
-                    onChange={(e) => setRtspSubstreamUrl(e.target.value)}
-                    placeholder="rtsp://.../substream"
-                    className="mt-1 w-full rounded-md border border-blue-200 p-2 text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
-                  />
+                  <div className="flex gap-2 mt-1">
+                    <input
+                      type="text"
+                      value={rtspSubstreamUrl}
+                      onChange={(e) => setRtspSubstreamUrl(e.target.value)}
+                      placeholder="rtsp://.../substream"
+                      className="w-full rounded-md border border-blue-200 p-2 text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-white"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleTest(rtspSubstreamUrl)}
+                      disabled={isTesting || !rtspSubstreamUrl}
+                      className="rounded-md bg-blue-200 p-2 text-blue-700 hover:bg-blue-300 dark:bg-blue-800 dark:text-blue-200 dark:hover:bg-blue-700 disabled:opacity-50"
+                      title="Test Stream"
+                    >
+                      {isTesting ? (
+                        <Loader className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Wifi className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
                 </div>
 
                 {/* Webhook Info (Advanced) */}
@@ -266,6 +303,12 @@ export default function MotionSettingsPage({
           </div>
         </div>
       )}
+
+      <TestStreamModal
+        isOpen={isTestModalOpen}
+        onClose={() => setIsTestModalOpen(false)}
+        testStreamPath={testStreamPath}
+      />
     </div>
   );
 }

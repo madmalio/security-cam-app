@@ -32,7 +32,6 @@ export default function TestStreamModal({
         motion_roi: null,
         motion_sensitivity: 50,
         continuous_recording: false,
-        // --- FIX: Added missing field ---
         ai_classes: "",
       });
     } else {
@@ -43,7 +42,18 @@ export default function TestStreamModal({
   return (
     <Transition appear show={isOpen} as={Fragment}>
       <Dialog as="div" className="relative z-50" onClose={onClose}>
-        {/* ... (Keep existing JSX for modal UI) ... */}
+        <Transition.Child
+          as={Fragment}
+          enter="ease-out duration-300"
+          enterFrom="opacity-0"
+          enterTo="opacity-100"
+          leave="ease-in duration-200"
+          leaveFrom="opacity-100"
+          leaveTo="opacity-0"
+        >
+          <div className="fixed inset-0 bg-black/80" />
+        </Transition.Child>
+
         <div className="fixed inset-0 overflow-y-auto">
           <div className="flex min-h-full items-center justify-center p-4 text-center">
             <Transition.Child
@@ -55,30 +65,41 @@ export default function TestStreamModal({
               leaveFrom="opacity-100 scale-100"
               leaveTo="opacity-0 scale-95"
             >
-              <Dialog.Panel className="w-full max-w-2xl transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all dark:bg-zinc-800">
-                <Dialog.Title
-                  as="h3"
-                  className="flex justify-between items-center text-lg font-medium leading-6 text-gray-900 dark:text-white"
-                >
-                  Testing Connection...
+              <Dialog.Panel className="w-full max-w-3xl transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all dark:bg-zinc-900">
+                <div className="flex items-center justify-between mb-4">
+                  <Dialog.Title
+                    as="h3"
+                    className="text-lg font-medium leading-6 text-gray-900 dark:text-white"
+                  >
+                    Connection Test
+                  </Dialog.Title>
                   <button
                     onClick={onClose}
-                    className="rounded-full p-1 text-gray-600 hover:bg-gray-100 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                    className="rounded-full p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-zinc-800"
                   >
                     <X className="h-5 w-5" />
                   </button>
-                </Dialog.Title>
-                <div className="mt-4">
-                  <p className="text-sm text-gray-500 dark:text-zinc-400 mb-4">
-                    The video player below will attempt to connect to your
-                    stream. If you see a "Connection Failed" error, please check
-                    your RTSP URL and credentials.
+                </div>
+
+                <div className="space-y-4">
+                  <p className="text-sm text-gray-500 dark:text-zinc-400">
+                    Attempting to stream from the provided URL...
                   </p>
 
-                  {/* Render the player only when the camera object is set */}
-                  {testCamera && (
-                    <LiveCameraView camera={testCamera} isMuted={false} />
-                  )}
+                  {/* --- FIX: Enforce height/aspect ratio wrapper --- */}
+                  <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden shadow-inner border border-gray-200 dark:border-zinc-700">
+                    {testCamera ? (
+                      <LiveCameraView
+                        camera={testCamera}
+                        isMuted={false}
+                        fill={true}
+                      />
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-gray-500">
+                        Loading stream configuration...
+                      </div>
+                    )}
+                  </div>
                 </div>
               </Dialog.Panel>
             </Transition.Child>

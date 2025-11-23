@@ -4,6 +4,7 @@
 backend/.env
 db_password.txt
 secret_key.txt
+jwt_secret.txt
 db_url.txt
 mediamtx_admin_pass.txt
 mediamtx_viewer_pass.txt
@@ -26,3 +27,6 @@ backend/__pycache__/
 # --- OS Files ---
 # Ignore Mac-specific files
 .DS_Store
+
+recordings/*
+recordings/**/*

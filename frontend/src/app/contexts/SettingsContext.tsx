@@ -8,21 +8,22 @@ import React, {
   ReactNode,
 } from "react";
 
-// Define the types for our settings
 export type DefaultView = "grid" | "focus";
-export type EventsView = "grid" | "list"; // <-- Added
+export type EventsView = "grid" | "list";
 export type GridColumns = 3 | 4 | 5;
+export type Theme = "light" | "dark" | "system"; // <-- New Type
 
 interface SettingsContextType {
   defaultView: DefaultView;
-  eventsView: EventsView; // <-- Added
+  eventsView: EventsView;
   gridColumns: GridColumns;
+  theme: Theme; // <-- New Field
   setDefaultView: (view: DefaultView) => void;
-  setEventsView: (view: EventsView) => void; // <-- Added
+  setEventsView: (view: EventsView) => void;
   setGridColumns: (cols: GridColumns) => void;
+  setTheme: (theme: Theme) => void; // <-- New Setter
 }
 
-// Helper functions to get from localStorage
 const getInitialView = (): DefaultView => {
   if (typeof window === "undefined") return "grid";
   return (localStorage.getItem("defaultView") as DefaultView) || "grid";
@@ -39,7 +40,12 @@ const getInitialColumns = (): GridColumns => {
   return [3, 4, 5].includes(cols) ? (cols as GridColumns) : 4;
 };
 
-// Create the context
+// --- NEW: Theme Initializer ---
+const getInitialTheme = (): Theme => {
+  if (typeof window === "undefined") return "system";
+  return (localStorage.getItem("theme") as Theme) || "system";
+};
+
 const SettingsContext = createContext<SettingsContextType | undefined>(
   undefined
 );
@@ -47,22 +53,38 @@ const SettingsContext = createContext<SettingsContextType | undefined>(
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [defaultView, setDefaultView] = useState<DefaultView>(getInitialView);
   const [eventsView, setEventsView] =
-    useState<EventsView>(getInitialEventsView); // <-- Added
+    useState<EventsView>(getInitialEventsView);
   const [gridColumns, setGridColumns] =
     useState<GridColumns>(getInitialColumns);
+  const [theme, setTheme] = useState<Theme>(getInitialTheme);
 
-  // Save to localStorage whenever settings change
   useEffect(() => {
     localStorage.setItem("defaultView", defaultView);
   }, [defaultView]);
-
   useEffect(() => {
-    localStorage.setItem("eventsView", eventsView); // <-- Added
+    localStorage.setItem("eventsView", eventsView);
   }, [eventsView]);
-
   useEffect(() => {
     localStorage.setItem("gridColumns", gridColumns.toString());
   }, [gridColumns]);
+
+  // --- FIX: Apply Theme Class ---
+  useEffect(() => {
+    localStorage.setItem("theme", theme);
+
+    const root = window.document.documentElement;
+    root.classList.remove("light", "dark");
+
+    if (theme === "system") {
+      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
+        .matches
+        ? "dark"
+        : "light";
+      root.classList.add(systemTheme);
+    } else {
+      root.classList.add(theme);
+    }
+  }, [theme]);
 
   return (
     <SettingsContext.Provider
@@ -70,9 +92,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         defaultView,
         eventsView,
         gridColumns,
+        theme,
         setDefaultView,
         setEventsView,
         setGridColumns,
+        setTheme,
       }}
     >
       {children}
@@ -80,7 +104,6 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// Custom hook to use the settings
 export function useSettings() {
   const context = useContext(SettingsContext);
   if (context === undefined) {

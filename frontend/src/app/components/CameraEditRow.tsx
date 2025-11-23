@@ -16,7 +16,7 @@ import {
   Wifi,
   Activity,
   AlertTriangle,
-  HardDrive, // <-- Added Icon
+  HardDrive,
 } from "lucide-react";
 import { toast } from "sonner";
 import ConfirmModal from "./ConfirmModal";
@@ -33,6 +33,8 @@ export default function CameraEditRow({
 }: CameraEditRowProps) {
   const { api } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
+
+  // Form State
   const [name, setName] = useState(camera.name);
   const [rtspUrl, setRtspUrl] = useState(camera.rtsp_url);
   const [substreamUrl, setSubstreamUrl] = useState(
@@ -42,19 +44,19 @@ export default function CameraEditRow({
     camera.continuous_recording
   );
 
+  // Loading States
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
-
-  // Wipe State
   const [isWiping, setIsWiping] = useState(false);
-  const [isConfirmWipeOpen, setIsConfirmWipeOpen] = useState(false);
-
-  // Test Stream Logic
   const [isTesting, setIsTesting] = useState(false);
+
+  // Modal States
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [isConfirmWipeOpen, setIsConfirmWipeOpen] = useState(false);
   const [isTestModalOpen, setIsTestModalOpen] = useState(false);
   const [testStreamPath, setTestStreamPath] = useState<string | null>(null);
 
+  // Drag and Drop hook
   const {
     attributes,
     listeners,
@@ -71,6 +73,8 @@ export default function CameraEditRow({
     opacity: isDragging ? 0.5 : 1,
   };
 
+  // --- Handlers ---
+
   const handleSave = async () => {
     setIsSaving(true);
     try {
@@ -81,13 +85,11 @@ export default function CameraEditRow({
           rtsp_url: rtspUrl,
           rtsp_substream_url: substreamUrl || null,
           continuous_recording: continuousRecording,
+          // Note: We don't send ai_classes here so the backend keeps existing values
         }),
       });
-      if (!response) return;
 
-      if (!response.ok) {
-        throw new Error("Failed to update camera");
-      }
+      if (!response || !response.ok) throw new Error("Failed to update camera");
 
       toast.success("Camera saved successfully");
       setIsEditing(false);
@@ -105,11 +107,8 @@ export default function CameraEditRow({
       const response = await api(`/api/cameras/${camera.id}`, {
         method: "DELETE",
       });
-      if (!response) return;
+      if (!response || !response.ok) throw new Error("Failed to delete camera");
 
-      if (!response.ok) {
-        throw new Error("Failed to delete camera");
-      }
       toast.success("Camera deleted");
       onUpdate();
     } catch (err: any) {
@@ -121,15 +120,12 @@ export default function CameraEditRow({
   const handleWipeRecordings = async () => {
     setIsWiping(true);
     setIsConfirmWipeOpen(false);
-
     try {
       const response = await api(`/api/cameras/${camera.id}/recordings`, {
         method: "DELETE",
       });
-
-      if (!response || !response.ok) {
+      if (!response || !response.ok)
         throw new Error("Failed to wipe recordings");
-      }
 
       toast.success(`All recordings for ${camera.name} have been deleted.`);
     } catch (err: any) {
@@ -139,16 +135,15 @@ export default function CameraEditRow({
     }
   };
 
-  const handleTestConnection = async () => {
-    if (!rtspUrl) return;
+  const handleTestConnection = async (url: string) => {
+    if (!url) return;
     setIsTesting(true);
     try {
       const response = await api("/api/cameras/test-connection", {
         method: "POST",
-        body: JSON.stringify({ rtsp_url: rtspUrl }),
+        body: JSON.stringify({ rtsp_url: url }),
       });
-      if (!response) return;
-      if (!response.ok) throw new Error("Test failed");
+      if (!response || !response.ok) throw new Error("Test failed");
 
       const data = await response.json();
       setTestStreamPath(data.path);
@@ -160,6 +155,8 @@ export default function CameraEditRow({
     }
   };
 
+  // --- Render ---
+
   if (isEditing) {
     return (
       <div
@@ -168,6 +165,7 @@ export default function CameraEditRow({
         className="flex flex-col gap-4 rounded-lg border-2 border-blue-500 bg-white p-4 shadow-sm dark:border-blue-400 dark:bg-zinc-800"
       >
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {/* Name */}
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-zinc-400">
               Camera Name
@@ -179,6 +177,8 @@ export default function CameraEditRow({
               className="w-full rounded-md border border-gray-300 p-2 text-sm dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
             />
           </div>
+
+          {/* Main Stream */}
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-zinc-400">
               Main Stream (RTSP)
@@ -192,7 +192,7 @@ export default function CameraEditRow({
               />
               <button
                 type="button"
-                onClick={handleTestConnection}
+                onClick={() => handleTestConnection(rtspUrl)}
                 disabled={isTesting}
                 className="rounded-md bg-gray-100 p-2 text-gray-600 hover:bg-gray-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
                 title="Test Stream"
@@ -205,20 +205,37 @@ export default function CameraEditRow({
               </button>
             </div>
           </div>
+
+          {/* Substream */}
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-zinc-400">
               Substream (Optional)
             </label>
-            <input
-              type="text"
-              value={substreamUrl}
-              onChange={(e) => setSubstreamUrl(e.target.value)}
-              placeholder="Lower res for motion detection"
-              className="w-full rounded-md border border-gray-300 p-2 text-sm dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
-            />
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={substreamUrl}
+                onChange={(e) => setSubstreamUrl(e.target.value)}
+                placeholder="Low res for AI detection"
+                className="w-full rounded-md border border-gray-300 p-2 text-sm dark:border-zinc-600 dark:bg-zinc-700 dark:text-white"
+              />
+              <button
+                type="button"
+                onClick={() => handleTestConnection(substreamUrl)}
+                disabled={isTesting || !substreamUrl}
+                className="rounded-md bg-gray-100 p-2 text-gray-600 hover:bg-gray-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600 disabled:opacity-50"
+                title="Test Substream"
+              >
+                {isTesting ? (
+                  <Loader className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Wifi className="h-4 w-4" />
+                )}
+              </button>
+            </div>
           </div>
 
-          {/* --- 24/7 Recording Toggle with Warning --- */}
+          {/* 24/7 Toggle */}
           <div
             className={`col-span-1 md:col-span-2 rounded-lg border p-3 transition-colors ${
               continuousRecording
@@ -241,7 +258,6 @@ export default function CameraEditRow({
                 Enable 24/7 Recording
               </label>
             </div>
-
             {continuousRecording && (
               <div className="mt-2 flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400">
                 <HardDrive className="h-3 w-3 shrink-0 mt-0.5" />
@@ -254,8 +270,11 @@ export default function CameraEditRow({
           </div>
         </div>
 
-        {/* Danger Zone (Wipe) */}
+        {/* Danger Zone */}
         <div className="mt-2 pt-4 border-t border-gray-200 dark:border-zinc-700">
+          <h4 className="text-xs font-bold text-red-600 uppercase tracking-wider mb-3">
+            Danger Zone
+          </h4>
           <button
             type="button"
             onClick={() => setIsConfirmWipeOpen(true)}
@@ -271,6 +290,7 @@ export default function CameraEditRow({
           </button>
         </div>
 
+        {/* Actions */}
         <div className="flex justify-end gap-2 mt-2">
           <button
             onClick={() => setIsEditing(false)}
@@ -299,7 +319,6 @@ export default function CameraEditRow({
           testStreamPath={testStreamPath}
         />
 
-        {/* Wipe Confirmation */}
         <ConfirmModal
           isOpen={isConfirmWipeOpen}
           onClose={() => setIsConfirmWipeOpen(false)}
@@ -317,9 +336,9 @@ export default function CameraEditRow({
                 ?
               </p>
               <p className="text-sm text-red-600 dark:text-red-400">
-                <AlertTriangle className="inline h-4 w-4 mr-1 -mt-0.5" />
-                This will remove all 24/7 history and motion events. This cannot
-                be undone.
+                <AlertTriangle className="inline h-4 w-4 mr-1 -mt-0.5" /> This
+                will remove all 24/7 history and motion events. This cannot be
+                undone.
               </p>
             </div>
           }

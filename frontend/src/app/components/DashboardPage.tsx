@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, Fragment, useCallback } from "react";
-import { Camera, User } from "@/app/types";
+import { Camera } from "@/app/types";
 import { toast } from "sonner";
 import {
   Grid,
@@ -12,7 +12,6 @@ import {
   Fullscreen,
   AppWindow,
   LogOut,
-  ChevronDown,
   Settings,
   ArrowLeft,
   Film,
@@ -46,13 +45,10 @@ export default function DashboardPage() {
   const { user, logout, api } = useAuth();
   if (!user) return null;
 
-  const { defaultView, gridColumns } = useSettings();
-
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [selectedCamera, setSelectedCamera] = useState<Camera | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [cameraToDelete, setCameraToDelete] = useState<Camera | null>(null);
@@ -68,7 +64,8 @@ export default function DashboardPage() {
     getInitialViewFromHash
   );
 
-  // View Mode State
+  const { defaultView, gridColumns } = useSettings();
+
   const [viewMode, setViewMode] = useState<"single" | "grid" | "focus">(
     defaultView
   );
@@ -78,9 +75,10 @@ export default function DashboardPage() {
 
   const [isMosaicFullscreen, setIsMosaicFullscreen] = useState(false);
   const [isGridFullscreen, setIsGridFullscreen] = useState(false);
+
   const [hasRestoredState, setHasRestoredState] = useState(false);
 
-  // --- 1. Hash Routing (Main Navigation) ---
+  // --- Routing & History ---
   useEffect(() => {
     const handleHashChange = () => {
       setCurrentView(getInitialViewFromHash());
@@ -102,7 +100,7 @@ export default function DashboardPage() {
     }
   }, [currentView]);
 
-  // --- 2. Fullscreen Handling ---
+  // --- Fullscreen Listener ---
   useEffect(() => {
     const handleFullscreenChange = () => {
       if (!document.fullscreenElement) {
@@ -116,7 +114,7 @@ export default function DashboardPage() {
     };
   }, []);
 
-  // --- 3. Data Fetching ---
+  // --- Data Fetching ---
   const fetchCameras = useCallback(async () => {
     try {
       setError(null);
@@ -130,7 +128,6 @@ export default function DashboardPage() {
       const sortedData = data.sort((a, b) => a.display_order - b.display_order);
       setCameras(sortedData);
 
-      // Only default select if we haven't selected one yet
       if (sortedData.length > 0 && !selectedCamera) {
         setSelectedCamera(sortedData[0]);
       }
@@ -141,15 +138,12 @@ export default function DashboardPage() {
   }, [api, selectedCamera]);
 
   useEffect(() => {
-    // Fetch cameras whenever the main view changes
     if (["dashboard", "settings", "events"].includes(currentView)) {
       fetchCameras();
     }
   }, [currentView, fetchCameras]);
 
-  // --- 4. State Persistence (Dashboard View) ---
-
-  // Restore state from URL when cameras are loaded
+  // --- State Restoration ---
   useEffect(() => {
     if (cameras.length > 0 && !hasRestoredState) {
       const params = new URLSearchParams(window.location.search);
@@ -173,10 +167,8 @@ export default function DashboardPage() {
     }
   }, [cameras, hasRestoredState]);
 
-  // Save state to URL whenever it changes
   useEffect(() => {
-    if (!hasRestoredState) return; // Don't overwrite URL until we've read it once
-
+    if (!hasRestoredState) return;
     if (currentView === "dashboard") {
       const url = new URL(window.location.href);
       url.searchParams.set("dashboardView", viewMode);
@@ -188,7 +180,6 @@ export default function DashboardPage() {
   }, [viewMode, selectedCamera, currentView, hasRestoredState]);
 
   // --- Handlers ---
-
   const toggleMosaicFullscreen = () => {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen();
@@ -363,6 +354,11 @@ export default function DashboardPage() {
     return "Dashboard";
   };
 
+  // --- HELPER: Avatar Image Source ---
+  const avatarSrc = user.gravatar_hash
+    ? `https://www.gravatar.com/avatar/${user.gravatar_hash}?s=64&d=mp`
+    : null;
+
   return (
     <div className="flex h-screen w-full bg-gray-100 dark:bg-zinc-900">
       <div className={`relative flex flex-1 flex-col overflow-hidden`}>
@@ -374,6 +370,7 @@ export default function DashboardPage() {
             </h1>
           </div>
           <div className="flex items-center">
+            {/* Dashboard Controls */}
             {currentView === "dashboard" &&
               viewMode !== "single" &&
               cameras.length > 0 && (
@@ -412,6 +409,8 @@ export default function DashboardPage() {
                   </button>
                 </>
               )}
+
+            {/* Back Button Logic */}
             {currentView === "dashboard" &&
               viewMode === "single" &&
               cameras.length > 0 && (
@@ -438,22 +437,32 @@ export default function DashboardPage() {
               </button>
             )}
 
-            <UserIcon className="h-8 w-8 rounded-full bg-gray-200 p-1 text-gray-600 dark:bg-zinc-700 dark:text-zinc-300" />
+            {/* --- USER AVATAR DROPDOWN --- */}
             <HeadlessMenu as="div" className="relative ml-1">
-              <HeadlessMenu.Button className="flex rounded-full p-1 text-gray-600 hover:bg-gray-100 dark:text-zinc-300 dark:hover:bg-zinc-700">
-                <ChevronDown className="h-5 w-5" />
+              <HeadlessMenu.Button className="flex items-center rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-zinc-900">
+                <span className="sr-only">Open user menu</span>
+                {avatarSrc ? (
+                  <img
+                    className="h-9 w-9 rounded-full border border-gray-300 dark:border-zinc-600"
+                    src={avatarSrc}
+                    alt="User Avatar"
+                  />
+                ) : (
+                  <UserIcon className="h-9 w-9 rounded-full bg-gray-200 p-1.5 text-gray-600 dark:bg-zinc-700 dark:text-zinc-300" />
+                )}
               </HeadlessMenu.Button>
+
               <Transition
                 as={Fragment}
                 enter="transition ease-out duration-100"
                 enterFrom="transform opacity-0 scale-95"
-                enterTo="transform opacity-100 scale-110"
+                enterTo="transform opacity-100 scale-100"
                 leave="transition ease-in duration-75"
                 leaveFrom="transform opacity-100 scale-100"
                 leaveTo="transform opacity-0 scale-95"
               >
                 <HeadlessMenu.Items className="absolute right-0 z-10 mt-2 w-56 origin-top-right rounded-md bg-white py-1 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:bg-zinc-800 dark:ring-zinc-700">
-                  <div className="border-b border-gray-200 px-4 py-2 dark:border-zinc-700">
+                  <div className="border-b border-gray-200 px-4 py-3 dark:border-zinc-700">
                     <p className="text-sm text-gray-500 dark:text-zinc-400">
                       Signed in as
                     </p>
@@ -461,49 +470,51 @@ export default function DashboardPage() {
                       {user.email}
                     </p>
                   </div>
-                  <HeadlessMenu.Item>
-                    {({ active }) => (
-                      <button
-                        onClick={() => setIsAddModalOpen(true)}
-                        className={`${
-                          active ? "bg-gray-100 dark:bg-zinc-700" : ""
-                        } mt-1 flex w-full items-center px-4 py-2 text-sm text-gray-700 dark:text-zinc-200`}
-                      >
-                        <PlusCircle className="mr-2 h-5 w-5" />
-                        Add Camera
-                      </button>
-                    )}
-                  </HeadlessMenu.Item>
-                  <HeadlessMenu.Item>
-                    {({ active }) => (
-                      <button
-                        onClick={() => {
-                          setEventsInitialCameraId(null);
-                          setCurrentView("events");
-                        }}
-                        className={`${
-                          active ? "bg-gray-100 dark:bg-zinc-700" : ""
-                        } flex w-full items-center px-4 py-2 text-sm text-gray-700 dark:text-zinc-200`}
-                      >
-                        <Film className="mr-2 h-5 w-5" />
-                        Events
-                      </button>
-                    )}
-                  </HeadlessMenu.Item>
-                  <HeadlessMenu.Item>
-                    {({ active }) => (
-                      <button
-                        onClick={() => setCurrentView("settings")}
-                        className={`${
-                          active ? "bg-gray-100 dark:bg-zinc-700" : ""
-                        } flex w-full items-center px-4 py-2 text-sm text-gray-700 dark:text-zinc-200`}
-                      >
-                        <Settings className="mr-2 h-5 w-5" />
-                        Settings
-                      </button>
-                    )}
-                  </HeadlessMenu.Item>
-                  <div>
+                  <div className="py-1">
+                    <HeadlessMenu.Item>
+                      {({ active }) => (
+                        <button
+                          onClick={() => setIsAddModalOpen(true)}
+                          className={`${
+                            active ? "bg-gray-100 dark:bg-zinc-700" : ""
+                          } flex w-full items-center px-4 py-2 text-sm text-gray-700 dark:text-zinc-200`}
+                        >
+                          <PlusCircle className="mr-2 h-4 w-4" />
+                          Add Camera
+                        </button>
+                      )}
+                    </HeadlessMenu.Item>
+                    <HeadlessMenu.Item>
+                      {({ active }) => (
+                        <button
+                          onClick={() => {
+                            setEventsInitialCameraId(null);
+                            setCurrentView("events");
+                          }}
+                          className={`${
+                            active ? "bg-gray-100 dark:bg-zinc-700" : ""
+                          } flex w-full items-center px-4 py-2 text-sm text-gray-700 dark:text-zinc-200`}
+                        >
+                          <Film className="mr-2 h-4 w-4" />
+                          Events
+                        </button>
+                      )}
+                    </HeadlessMenu.Item>
+                    <HeadlessMenu.Item>
+                      {({ active }) => (
+                        <button
+                          onClick={() => setCurrentView("settings")}
+                          className={`${
+                            active ? "bg-gray-100 dark:bg-zinc-700" : ""
+                          } flex w-full items-center px-4 py-2 text-sm text-gray-700 dark:text-zinc-200`}
+                        >
+                          <Settings className="mr-2 h-4 w-4" />
+                          Settings
+                        </button>
+                      )}
+                    </HeadlessMenu.Item>
+                  </div>
+                  <div className="border-t border-gray-100 dark:border-zinc-700 py-1">
                     <HeadlessMenu.Item>
                       {({ active }) => (
                         <button
@@ -512,7 +523,7 @@ export default function DashboardPage() {
                             active ? "bg-gray-100 dark:bg-zinc-700" : ""
                           } flex w-full items-center px-4 py-2 text-sm text-gray-700 dark:text-zinc-200`}
                         >
-                          <LogOut className="mr-2 h-5 w-5" />
+                          <LogOut className="mr-2 h-4 w-4" />
                           Logout
                         </button>
                       )}
