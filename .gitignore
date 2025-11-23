@@ -4,7 +4,7 @@
 backend/.env
 db_password.txt
 secret_key.txt
-jwt_secret.txt
+jwt_secret_key.txt
 db_url.txt
 mediamtx_admin_pass.txt
 mediamtx_viewer_pass.txt
