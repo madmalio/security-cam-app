@@ -62,9 +62,6 @@ func (m *Manager) SyncCameras() {
 				delete(m.ContinuousProcs, cam.ID)
 			}
 		}
-		
-		// NOTE: "Active" Motion Detection is now handled purely by external AI (webhook)
-		// We no longer spawn 'motion' daemon processes here.
 	}
 }
 
@@ -136,7 +133,8 @@ func (m *Manager) spawnContinuous(cam models.Camera) {
 	m.ContinuousProcs[cam.ID] = &ContinuousProcess{Process: cmd, LogFile: logFile}
 }
 
-func (m *Manager) StartEventRecord(camID uint) error {
+// --- UPDATED: Accepts 'label' string ---
+func (m *Manager) StartEventRecord(camID uint, label string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -144,6 +142,9 @@ func (m *Manager) StartEventRecord(camID uint) error {
 
 	var cam models.Camera
 	if err := database.DB.First(&cam, camID).Error; err != nil { return err }
+
+	// Default to "motion" if no label provided
+	if label == "" { label = "motion" }
 
 	now := time.Now()
 	filename := fmt.Sprintf("event_%d_%s.mp4", camID, now.Format("20060102-150405"))
@@ -155,7 +156,7 @@ func (m *Manager) StartEventRecord(camID uint) error {
 		UserID:    cam.OwnerID,
 		StartTime: now,
 		VideoPath: relPath,
-		Reason:    "motion",
+		Reason:    label, // <--- SAVING THE LABEL (person, car, etc)
 	}
 	database.DB.Create(&event)
 
@@ -179,7 +180,7 @@ func (m *Manager) StartEventRecord(camID uint) error {
 		StartTime: now,
 	}
 	
-	log.Printf("Started Event %d for Camera %d\n", event.ID, camID)
+	log.Printf("Started Event %d for Camera %d [%s]\n", event.ID, camID, label)
 	return nil
 }
 

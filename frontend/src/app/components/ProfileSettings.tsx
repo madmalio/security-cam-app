@@ -2,13 +2,12 @@
 
 import React, { useState, FormEvent, useEffect } from "react";
 import { toast } from "sonner";
-import { Loader } from "lucide-react";
+import { Loader, Bell, BellOff, CheckCircle2, XCircle } from "lucide-react";
 import { User } from "@/app/types";
-import { useAuth } from "@/app/contexts/AuthContext"; // <-- 1. IMPORT
+import { useAuth } from "@/app/contexts/AuthContext";
+import { urlBase64ToUint8Array } from "@/app/utils/push";
 
-// 2. No more props!
 export default function ProfileSettings() {
-  // 3. Get user and api from context
   const { user: initialUser, api, login } = useAuth();
 
   const [user, setUser] = useState<User | null>(initialUser);
@@ -17,12 +16,41 @@ export default function ProfileSettings() {
   );
   const [isSavingName, setIsSavingName] = useState(false);
 
+  // --- Notification State ---
+  const [isSubscribing, setIsSubscribing] = useState(false);
+  const [isSubscribed, setIsSubscribed] = useState(false);
+  const [isLoadingStatus, setIsLoadingStatus] = useState(true);
+
   useEffect(() => {
     if (initialUser) {
       setUser(initialUser);
       setDisplayName(initialUser.display_name || "");
     }
   }, [initialUser]);
+
+  // --- Check Subscription Status on Mount ---
+  useEffect(() => {
+    const checkStatus = async () => {
+      if (!("serviceWorker" in navigator)) {
+        setIsLoadingStatus(false);
+        return;
+      }
+
+      try {
+        const registration = await navigator.serviceWorker.getRegistration();
+        if (registration) {
+          const subscription = await registration.pushManager.getSubscription();
+          setIsSubscribed(!!subscription);
+        }
+      } catch (error) {
+        console.error("Error checking subscription:", error);
+      } finally {
+        setIsLoadingStatus(false);
+      }
+    };
+
+    checkStatus();
+  }, []);
 
   if (!user) {
     return (
@@ -35,7 +63,6 @@ export default function ProfileSettings() {
   const userName = user.display_name || user.email.split("@")[0];
   const gravatarUrl = `https://www.gravatar.com/avatar/${user.gravatar_hash}?s=96&d=mp`;
 
-  // 4. Update to use 'api' hook
   const handleSaveProfile = async (e: FormEvent) => {
     e.preventDefault();
     setIsSavingName(true);
@@ -55,11 +82,6 @@ export default function ProfileSettings() {
 
       const updatedUser = await response.json();
 
-      // 5. Update user in local state and global context
-      setUser(updatedUser);
-      // We call 'login' to update the user object in the parent context
-      // This is a bit of a hack, we could add a dedicated 'setUser' to the context
-      // But this works for now.
       const rt = localStorage.getItem("refreshToken");
       const at =
         (await api("/api/webrtc-creds"))?.headers
@@ -74,6 +96,66 @@ export default function ProfileSettings() {
       toast.error(err.message);
     } finally {
       setIsSavingName(false);
+    }
+  };
+
+  const handleSubscribe = async () => {
+    setIsSubscribing(true);
+    try {
+      if (!("serviceWorker" in navigator)) {
+        throw new Error("Service Workers not supported in this browser.");
+      }
+
+      // 1. Register Service Worker
+      const registration = await navigator.serviceWorker.register("/sw.js", {
+        scope: "/",
+      });
+
+      // 2. Fetch VAPID Key
+      const keyRes = await api("/api/notifications/vapid-key");
+      if (!keyRes || !keyRes.ok) throw new Error("Failed to get VAPID key");
+      const { publicKey } = await keyRes.json();
+
+      // 3. Subscribe locally
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+
+      // 4. Send to Backend
+      await api("/api/notifications/subscribe", {
+        method: "POST",
+        body: JSON.stringify(subscription),
+      });
+
+      setIsSubscribed(true);
+      toast.success("Notifications enabled for this device!");
+    } catch (err: any) {
+      console.error(err);
+      toast.error("Failed to subscribe: " + err.message);
+    } finally {
+      setIsSubscribing(false);
+    }
+  };
+
+  const handleUnsubscribe = async () => {
+    setIsSubscribing(true);
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+
+      if (subscription) {
+        await subscription.unsubscribe();
+        // Note: We rely on the backend's lazy cleanup (410 Gone)
+        // to remove the record from the DB eventually.
+      }
+
+      setIsSubscribed(false);
+      toast.info("Notifications disabled for this device.");
+    } catch (err: any) {
+      toast.error("Failed to unsubscribe");
+    } finally {
+      setIsSubscribing(false);
     }
   };
 
@@ -131,6 +213,84 @@ export default function ProfileSettings() {
             </button>
           </div>
         </form>
+      </div>
+
+      {/* Notifications Card */}
+      <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-zinc-700 dark:bg-zinc-800">
+        <div className="flex items-start justify-between">
+          <div className="flex items-center gap-4 mb-4">
+            <div
+              className={`p-3 rounded-full ${
+                isSubscribed
+                  ? "bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400"
+                  : "bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400"
+              }`}
+            >
+              {isSubscribed ? (
+                <Bell className="h-6 w-6" />
+              ) : (
+                <BellOff className="h-6 w-6" />
+              )}
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                Push Notifications
+              </h2>
+              <p className="text-sm text-gray-500 dark:text-zinc-400">
+                Receive alerts on this device when motion is detected.
+              </p>
+
+              {/* Status Badge */}
+              <div className="mt-2 flex items-center gap-2">
+                {isLoadingStatus ? (
+                  <span className="text-xs text-gray-400">
+                    Checking status...
+                  </span>
+                ) : isSubscribed ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                    <CheckCircle2 className="h-3 w-3" /> Active
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-zinc-700 dark:text-zinc-400">
+                    <XCircle className="h-3 w-3" /> Inactive
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex justify-end border-t border-gray-100 dark:border-zinc-700 pt-4 mt-2">
+          {isSubscribed ? (
+            <button
+              onClick={handleUnsubscribe}
+              disabled={isSubscribing || isLoadingStatus}
+              className="flex items-center gap-2 rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-900/30 dark:bg-transparent dark:text-red-400 dark:hover:bg-red-900/20 disabled:opacity-50"
+            >
+              {isSubscribing ? (
+                <Loader className="h-4 w-4 animate-spin" />
+              ) : (
+                <>
+                  <BellOff className="h-4 w-4" /> Disable Notifications
+                </>
+              )}
+            </button>
+          ) : (
+            <button
+              onClick={handleSubscribe}
+              disabled={isSubscribing || isLoadingStatus}
+              className="flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-200 disabled:opacity-50"
+            >
+              {isSubscribing ? (
+                <Loader className="h-4 w-4 animate-spin" />
+              ) : (
+                <>
+                  <Bell className="h-4 w-4" /> Enable Notifications
+                </>
+              )}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

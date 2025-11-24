@@ -28,6 +28,8 @@ import (
 	"nvr-server/internal/database"
 	"nvr-server/internal/detector"
 	"nvr-server/internal/models"
+
+	webpush "github.com/SherClockHolmes/webpush-go"
 )
 
 // --- CONFIGURATION ---
@@ -37,8 +39,10 @@ const (
 )
 
 var (
-	Detector  *detector.Manager
-	JwtSecret []byte
+	Detector        *detector.Manager
+	JwtSecret       []byte
+	VapidPrivateKey string
+	VapidPublicKey  string
 )
 
 // --- STRUCTS ---
@@ -70,6 +74,14 @@ type SystemSettingsRequest struct {
 	RetentionDays int `json:"retention_days"`
 }
 
+type SubscribeRequest struct {
+	Endpoint string `json:"endpoint"`
+	Keys     struct {
+		P256dh string `json:"p256dh"`
+		Auth   string `json:"auth"`
+	} `json:"keys"`
+}
+
 // --- JWT CLAIMS ---
 type JwtCustomClaims struct {
 	UserID uint   `json:"uid"`
@@ -78,12 +90,14 @@ type JwtCustomClaims struct {
 }
 
 func main() {
-	// 1. Load Secrets
+	// 1. Load Secrets & Init VAPID Keys
 	loadSecrets()
+	initVapidKeys()
 
 	// 2. Initialize Database
 	database.InitDB()
 	ensureDefaultSettings()
+	database.DB.AutoMigrate(&models.PushSubscription{})
 
 	// 3. Initialize Detector
 	Detector = detector.NewManager()
@@ -92,7 +106,6 @@ func main() {
 	// 4. Setup Server
 	e := echo.New()
 	
-	// --- LOGGING CONFIGURATION ---
 	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
 		Skipper: func(c echo.Context) bool {
 			return strings.HasPrefix(c.Request().URL.Path, "/api/system/health")
@@ -128,6 +141,10 @@ func main() {
 	
 	authGroup := e.Group("")
 	authGroup.Use(jwtMiddleware)
+
+	// Notification Routes
+	authGroup.GET("/api/notifications/vapid-key", getVapidKey)
+	authGroup.POST("/api/notifications/subscribe", subscribePush)
 
 	// User Routes
 	authGroup.GET("/users/me", getMe)
@@ -201,6 +218,27 @@ func loadSecrets() {
 	}
 }
 
+func initVapidKeys() {
+	privPath := "/recordings/vapid_private.key"
+	pubPath := "/recordings/vapid_public.key"
+
+	if _, err := os.Stat(privPath); os.IsNotExist(err) {
+		log.Println("Generating new VAPID keys for Push Notifications...")
+		privateKey, publicKey, err := webpush.GenerateVAPIDKeys()
+		if err != nil {
+			log.Fatal("Failed to generate VAPID keys:", err)
+		}
+		os.WriteFile(privPath, []byte(privateKey), 0600)
+		os.WriteFile(pubPath, []byte(publicKey), 0644)
+	}
+
+	privBytes, _ := os.ReadFile(privPath)
+	pubBytes, _ := os.ReadFile(pubPath)
+	
+	VapidPrivateKey = string(privBytes)
+	VapidPublicKey = string(pubBytes)
+}
+
 func ensureDefaultSettings() {
 	var s models.SystemSettings
 	if err := database.DB.First(&s).Error; err != nil {
@@ -244,6 +282,75 @@ func jwtMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 
 func getUser(c echo.Context) *models.User {
 	return c.Get("user").(*models.User)
+}
+
+// --- NOTIFICATION HANDLERS ---
+
+func getVapidKey(c echo.Context) error {
+	return c.JSON(http.StatusOK, map[string]string{
+		"publicKey": VapidPublicKey,
+	})
+}
+
+func subscribePush(c echo.Context) error {
+	user := getUser(c)
+	req := new(SubscribeRequest)
+	if err := c.Bind(req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+	}
+
+	sub := models.PushSubscription{
+		UserID:    user.ID,
+		Endpoint:  req.Endpoint,
+		P256dh:    req.Keys.P256dh,
+		Auth:      req.Keys.Auth,
+		UserAgent: c.Request().UserAgent(),
+		CreatedAt: time.Now(),
+	}
+
+	if err := database.DB.Where(models.PushSubscription{Endpoint: req.Endpoint}).Assign(sub).FirstOrCreate(&sub).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save subscription"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Subscribed"})
+}
+
+func sendBroadcastNotification(payload string) {
+	var subs []models.PushSubscription
+	database.DB.Find(&subs)
+
+	if len(subs) == 0 {
+		return
+	}
+
+	log.Printf("Sending Push Notification to %d subscribers...", len(subs))
+
+	for _, sub := range subs {
+		s := &webpush.Subscription{
+			Endpoint: sub.Endpoint,
+			Keys: webpush.Keys{
+				P256dh: sub.P256dh,
+				Auth:   sub.Auth,
+			},
+		}
+
+		go func(s *webpush.Subscription) {
+			resp, err := webpush.SendNotification([]byte(payload), s, &webpush.Options{
+				Subscriber:      "mailto:admin@example.com",
+				VAPIDPublicKey:  VapidPublicKey,
+				VAPIDPrivateKey: VapidPrivateKey,
+				TTL:             30,
+			})
+			if err != nil {
+				log.Println("Push Error:", err)
+			} else if resp != nil {
+				defer resp.Body.Close()
+				if resp.StatusCode == 410 {
+					database.DB.Where("endpoint = ?", s.Endpoint).Delete(&models.PushSubscription{})
+				}
+			}
+		}(s)
+	}
 }
 
 // --- AUTH HANDLERS ---
@@ -431,7 +538,6 @@ func getCameras(c echo.Context) error {
 	return c.JSON(http.StatusOK, cameras)
 }
 
-// --- Internal (No Auth) ---
 func getAllCameras(c echo.Context) error {
 	var cameras []models.Camera
 	if err := database.DB.Find(&cameras).Error; err != nil {
@@ -572,14 +678,17 @@ func getEvents(c echo.Context) error {
 		tx = tx.Where("camera_id = ?", cid)
 	}
 
-	// --- FIX: Add Date Filtering Logic Here ---
+	// Smart Filter
+	if reason := c.QueryParam("reason"); reason != "" && reason != "all" {
+		tx = tx.Where("reason = ?", reason)
+	}
+
 	if start := c.QueryParam("start_ts"); start != "" {
 		tx = tx.Where("start_time >= ?", start)
 	}
 	if end := c.QueryParam("end_ts"); end != "" {
 		tx = tx.Where("start_time <= ?", end)
 	}
-	// -----------------------------------------
 	
 	tx.Order("start_time desc").Limit(100).Find(&events)
 	return c.JSON(http.StatusOK, events)
@@ -693,13 +802,12 @@ func getContinuousTimeline(c echo.Context) error {
 		if !f.IsDir() && strings.HasPrefix(f.Name(), cleanDate) && strings.HasSuffix(f.Name(), ".mp4") {
 			nameWithoutExt := strings.TrimSuffix(f.Name(), ".mp4")
 			
-			// --- FIX: Parse in LOCAL time (container TZ), not UTC ---
 			t, err := time.ParseInLocation("20060102-150405", nameWithoutExt, time.Local)
 			if err == nil {
 				endTime := t.Add(15 * time.Minute)
 				
 				segments = append(segments, RecordingSegment{
-					StartTime: t.Format(time.RFC3339), // Returns ISO string with correct offset
+					StartTime: t.Format(time.RFC3339),
 					EndTime:   endTime.Format(time.RFC3339),
 					Filename:  f.Name(),
 				})
@@ -800,16 +908,34 @@ func downloadFile(c echo.Context) error {
 // --- WEBHOOKS ---
 func webhookStart(c echo.Context) error {
 	id, _ := strconv.Atoi(c.Param("id"))
-	Detector.StartEventRecord(uint(id))
+	
+	label := c.QueryParam("label")
+	if label == "" {
+		label = "motion"
+	}
+	
+	// Start Recording with Label
+	if err := Detector.StartEventRecord(uint(id), label); err == nil {
+		var cam models.Camera
+		database.DB.First(&cam, id)
+		
+		title := "CamView Alert"
+		body := fmt.Sprintf("%s detected on %s", strings.Title(label), cam.Name)
+		
+		payload := fmt.Sprintf(`{"title":"%s","body":"%s","camId":%d}`, title, body, cam.ID)
+		
+		sendBroadcastNotification(payload)
+	}
+	
 	return c.String(http.StatusOK, "OK")
 }
+
 func webhookEnd(c echo.Context) error {
 	id, _ := strconv.Atoi(c.Param("id"))
 	Detector.StopEventRecord(uint(id))
 	return c.String(http.StatusOK, "OK")
 }
 
-// performSystemRestart connects to the Docker Socket
 func performSystemRestart() {
 	log.Println("--- SYSTEM RESTART INITIATED ---")
 	

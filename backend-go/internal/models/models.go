@@ -25,12 +25,8 @@ type Camera struct {
 	MotionROI           string `json:"motion_roi"`
 	MotionSensitivity   int    `json:"motion_sensitivity"`
 	ContinuousRecording bool   `json:"continuous_recording"`
-	
-	// --- REQUIRED FOR SELECTION ---
-	AIClasses string `json:"ai_classes"` 
-	
-	// --- REQUIRED FOR CRASH FIX ---
-	Events []Event `gorm:"foreignKey:CameraID;constraint:OnDelete:CASCADE;" json:"-"`
+	AIClasses           string `json:"ai_classes"` 
+	Events              []Event `gorm:"foreignKey:CameraID;constraint:OnDelete:CASCADE;" json:"-"`
 }
 
 type Event struct {
@@ -42,9 +38,7 @@ type Event struct {
 	Reason        string    `json:"reason"`
 	VideoPath     string    `json:"video_path"`
 	ThumbnailPath string    `json:"thumbnail_path"`
-
-	// --- REQUIRED FOR CRASH FIX ---
-	Camera Camera `gorm:"foreignKey:CameraID" json:"camera"`
+	Camera        Camera    `gorm:"foreignKey:CameraID" json:"camera"`
 }
 
 type UserSession struct {
@@ -60,4 +54,14 @@ type UserSession struct {
 type SystemSettings struct {
 	ID            uint `gorm:"primaryKey" json:"id"`
 	RetentionDays int  `json:"retention_days"`
+}
+
+type PushSubscription struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	UserID    uint      `json:"user_id"`
+	Endpoint  string    `gorm:"uniqueIndex" json:"endpoint"`
+	P256dh    string    `json:"p256dh"`
+	Auth      string    `json:"auth"`
+	UserAgent string    `json:"user_agent"`
+	CreatedAt time.Time `json:"created_at"`
 }

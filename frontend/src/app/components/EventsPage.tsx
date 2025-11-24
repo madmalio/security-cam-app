@@ -15,6 +15,7 @@ import {
   Camera as CameraIcon,
   CheckSquare,
   Square,
+  Filter,
 } from "lucide-react";
 import { format, differenceInSeconds } from "date-fns";
 import EventPlayerModal from "./EventPlayerModal";
@@ -91,12 +92,11 @@ const EventCard = ({
             <h3 className="font-semibold text-gray-900 dark:text-white">
               {format(new Date(event.start_time), "h:mm:ss a")}
             </h3>
-            {/* FIX: Safe Access to Camera Name */}
             <p className="text-xs text-gray-500 dark:text-zinc-400">
               {event.camera?.name || "Unknown Camera"}
             </p>
           </div>
-          <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+          <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium capitalize text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
             {event.reason}
           </span>
         </div>
@@ -165,12 +165,11 @@ const EventListItem = ({
         )}
       </div>
       <div className="flex min-w-0 flex-1 flex-col justify-center">
-        {/* FIX: Safe Access to Camera Name */}
         <h4 className="truncate text-base font-semibold text-gray-900 dark:text-white">
           {event.camera?.name || "Unknown Camera"}
         </h4>
         <div className="mt-1 flex items-center gap-2">
-          <span className="inline-flex items-center rounded bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/30 dark:text-green-300">
+          <span className="inline-flex items-center rounded bg-green-100 px-2 py-0.5 text-xs font-medium capitalize text-green-800 dark:bg-green-900/30 dark:text-green-300">
             {event.reason}
           </span>
           <span className="inline-flex items-center rounded bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-800 dark:bg-purple-900/30 dark:text-purple-300">
@@ -232,6 +231,9 @@ export default function EventsPage({
     getTodayString()
   );
 
+  // --- FILTER STATE ---
+  const [filterReason, setFilterReason] = useState<string>("all");
+
   // Selection State
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [isBatchDeleteOpen, setIsBatchDeleteOpen] = useState(false);
@@ -241,16 +243,12 @@ export default function EventsPage({
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
   const [tempPlaybackCam, setTempPlaybackCam] = useState<Camera | null>(null);
-
-  // --- FIX: State for timeline click playback ---
   const [tempPlaybackFile, setTempPlaybackFile] = useState<string | null>(null);
-  // --------------------------------------------
 
   const [eventToDelete, setEventToDelete] = useState<Event | null>(null);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Sync initialCameraId prop to state if it changes
   useEffect(() => {
     if (initialCameraId) setSelectedCameraId(initialCameraId);
   }, [initialCameraId]);
@@ -272,6 +270,11 @@ export default function EventsPage({
       }
       params.append("date_str", selectedDate);
 
+      // --- Reason Filter ---
+      if (filterReason !== "all") {
+        params.append("reason", filterReason);
+      }
+
       const localStart = new Date(selectedDate + "T00:00:00");
       const localEnd = new Date(selectedDate + "T23:59:59.999");
       params.append("start_ts", localStart.toISOString());
@@ -290,7 +293,7 @@ export default function EventsPage({
       }
     };
     fetchEvents();
-  }, [api, selectedCameraId, selectedDate]);
+  }, [api, selectedCameraId, selectedDate, filterReason]);
 
   const toggleSelect = (id: number) => {
     const newSet = new Set(selectedIds);
@@ -365,20 +368,18 @@ export default function EventsPage({
     }
   };
 
-  // Clicking a BLUE event bar
   const handleTimelineEventClick = (eventId: number) => {
     const eventToPlay = events.find((e) => e.id === eventId);
     if (eventToPlay) handlePlayClick(eventToPlay);
     else toast.error("Could not find event.");
   };
 
-  // Clicking a GRAY continuous bar
   const handleSegmentClick = (filename: string, offsetSeconds: number) => {
     if (!selectedCameraId) return;
     const cam = cameras.find((c) => c.id === selectedCameraId);
     if (cam) {
-      setTempPlaybackFile(filename); // 1. Save filename
-      setTempPlaybackCam(cam); // 2. Open modal
+      setTempPlaybackFile(filename);
+      setTempPlaybackCam(cam);
     }
   };
 
@@ -393,7 +394,7 @@ export default function EventsPage({
             No events found
           </h3>
           <p className="mt-2 text-sm text-gray-500 dark:text-zinc-400">
-            Try selecting a different camera or date.
+            Try selecting a different camera, date, or object filter.
           </p>
         </div>
       );
@@ -504,6 +505,24 @@ export default function EventsPage({
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
+            {/* OBJECT FILTER DROPDOWN */}
+            <div className="relative">
+              <Filter className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" />
+              <select
+                value={filterReason}
+                onChange={(e) => setFilterReason(e.target.value)}
+                className="appearance-none rounded-md border border-gray-300 bg-gray-50 pl-8 pr-8 py-1.5 text-sm focus:border-blue-500 focus:ring-blue-500 dark:border-zinc-600 dark:bg-zinc-900 dark:text-white capitalize cursor-pointer"
+              >
+                <option value="all">All Objects</option>
+                <option value="person">Person</option>
+                <option value="car">Car</option>
+                <option value="pet">Pet</option>
+                <option value="cat">Cat</option>
+                <option value="dog">Dog</option>
+                <option value="motion">Raw Motion</option>
+              </select>
+            </div>
+
             <div className="flex items-center rounded-lg border border-gray-200 bg-gray-50 p-1 dark:border-zinc-700 dark:bg-zinc-900">
               <button
                 onClick={() => setEventsView("grid")}
@@ -552,7 +571,7 @@ export default function EventsPage({
               date={selectedDate}
               cameraId={selectedCameraId}
               onEventClick={handleTimelineEventClick}
-              onSegmentClick={handleSegmentClick} // Wired up!
+              onSegmentClick={handleSegmentClick}
             />
           </div>
         )}
@@ -578,7 +597,6 @@ export default function EventsPage({
         }}
       />
 
-      {/* --- FIX: Wired up Continuous Modal with props --- */}
       <ContinuousPlaybackModal
         isOpen={!!tempPlaybackCam}
         onClose={() => {
